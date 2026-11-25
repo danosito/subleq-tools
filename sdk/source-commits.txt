@@ -1,0 +1,3 @@
+bb79724351cc201742c30aa4dbb9aaaa43be3654 llvm-project
+073fbd989f5d9b2f4fd93f3da53820ae65cb7063 uclibc-ng
+c06286b9aa8a2245af9fbea92b12d812a77a9aa1 linux

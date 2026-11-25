@@ -1,0 +1,3 @@
+## Conservative defaults for the SUBLEQ vt100 terminal. Nano's normal
+## editing, search, undo, and write-out key bindings are unchanged.
+set tabsize 8

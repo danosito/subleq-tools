@@ -1,0 +1,15 @@
+--- a/llvm/lib/Target/Subleq/SubleqISelLowering.cpp
++++ b/llvm/lib/Target/Subleq/SubleqISelLowering.cpp
+@@ -258,6 +258,12 @@
+   setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl___subleq_memcpy);
+   setLibcallImpl(RTLIB::MEMSET, RTLIB::impl___subleq_memset);
+   setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl___subleq_memmove);
++
++  // Linux/Subleq uses the libc-provided global canary and failure handler.
++  if (TM.getTargetTriple().isOSLinux()) {
++    setLibcallImpl(RTLIB::STACK_CHECK_GUARD, RTLIB::impl___stack_chk_guard);
++    setLibcallImpl(RTLIB::STACKPROTECTOR_CHECK_FAIL, RTLIB::impl___stack_chk_fail);
++  }
+ 
+   // Inline lowering of small memcpy/memset/memmove operations.
+   // Measured with tests/memcpy_study.c (1-8 word operations):
