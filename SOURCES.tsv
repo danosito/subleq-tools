@@ -1,0 +1,10 @@
+# SHA256 filename upstream-URL (the URL is public; no private build host required)
+154ab23b60070e8f27013c22977f1129425d67d1e8acd6e13010e617811e4cff binutils-2.47.tar.xz https://ftp.gnu.org/gnu/binutils/binutils-2.47.tar.xz
+e6738e29597f733270731aa90600f37ffdc045079dfc27ec7e8192cc81085c3e gcc-16.2.0.tar.xz https://ftp.gnu.org/gnu/gcc/gcc-16.2.0/gcc-16.2.0.tar.xz
+ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8 mpc-1.3.1.tar.gz https://ftp.gnu.org/gnu/mpc/mpc-1.3.1.tar.gz
+cd9fc3fe2b47743840e42c1592d3d87f8302eb18639c0b8b4ba0898002e2348f gdb-18.1.tar.xz https://ftp.gnu.org/gnu/gdb/gdb-18.1.tar.xz
+a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898 gmp-6.3.0.tar.xz https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz
+b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01 mpfr-4.2.2.tar.xz https://ftp.gnu.org/gnu/mpfr/mpfr-4.2.2.tar.xz
+a9affc52c9596ee0682bcdd4ceb3c0b235eb221d83d733dfd9b0dff45897cb0d nano-9.3.tar.xz https://www.nano-editor.org/dist/v9/nano-9.3.tar.xz
+355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11 ncurses-6.6.tar.gz https://invisible-mirror.net/archives/ncurses/ncurses-6.6.tar.gz
+8ba71f105f1d7cc6f0e17d0e9e8c1da4c2913b044c5806ea4148bf152c778573 vim-9.2.1398.tar.gz https://codeload.github.com/vim/vim/tar.gz/9f0f146b4fe23d54faf3ff5c0ba156c7f5a54433

@@ -1,0 +1,38 @@
+--- a/gdb/gdb_bfd.c
++++ b/gdb/gdb_bfd.c
+@@ -43,6 +43,7 @@
+    BFD.  */
+ static gdb::recursive_mutex gdb_bfd_mutex;
+ 
++#if CXX_STD_THREAD
+ /* BFD locking function.  */
+ 
+ static bool
+@@ -60,6 +61,7 @@
+   gdb_bfd_mutex.unlock ();
+   return true;
+ }
++#endif /* CXX_STD_THREAD */
+ 
+ /* An object of this type is stored in the section's user data when
+    mapping a section.  */
+@@ -1315,13 +1317,13 @@
+ void
+ gdb_bfd_init ()
+ {
+-  if (bfd_init () == BFD_INIT_MAGIC)
+-    {
+-      if (bfd_thread_init (gdb_bfd_lock, gdb_bfd_unlock, nullptr))
+-	return;
+-    }
++  if (bfd_init () != BFD_INIT_MAGIC)
++    error (_("fatal error: libbfd ABI mismatch"));
+ 
+-  error (_("fatal error: libbfd ABI mismatch"));
++#if CXX_STD_THREAD
++  if (!bfd_thread_init (gdb_bfd_lock, gdb_bfd_unlock, nullptr))
++    error (_("fatal error: libbfd threading initialization failed"));
++#endif /* CXX_STD_THREAD */
+ }
+ 
+ INIT_GDB_FILE (gdb_bfd)

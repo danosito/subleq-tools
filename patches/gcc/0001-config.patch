@@ -1,0 +1,36 @@
+--- a/config.sub
++++ b/config.sub
+@@ -1235,7 +1235,7 @@
+ 			| mipstx39 | mipstx39el \
+ 			| mmix \
+ 			| mn10200 | mn10300 \
+-			| moxie \
++			| moxie | subleq \
+ 			| mt \
+ 			| msp430 \
+ 			| nds32 | nds32le | nds32be \
+--- a/gcc/config.gcc
++++ b/gcc/config.gcc
+@@ -420,6 +420,10 @@
+ 	extra_options="${extra_options} g.opt"
+ 	;;
+ ft32*)	cpu_type=ft32
++	target_has_targetm_common=no
++	;;
++subleq-*-*)
++	cpu_type=subleq
+ 	target_has_targetm_common=no
+ 	;;
+ moxie*)	cpu_type=moxie
+@@ -1877,6 +1881,11 @@
+ 	gcc_cv_initfini_array=yes
+ 	thread_file=gcn
+ 	;;
++subleq-*-linux*uclibc*)
++	tm_file="elfos.h gnu-user.h linux.h glibc-stdint.h ${tm_file}"
++	native_system_header_dir=/include
++	gcc_cv_initfini_array=yes
++	;;
+ moxie-*-elf)
+ 	gas=yes
+ 	gnu_ld=yes

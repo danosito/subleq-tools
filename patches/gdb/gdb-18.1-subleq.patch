@@ -1,0 +1,562 @@
+--- a/gdb/Makefile.in
++++ b/gdb/Makefile.in
+@@ -891,6 +891,7 @@
+ 	sparc-ravenscar-thread.o \
+ 	sparc-sol2-tdep.o \
+ 	sparc-tdep.o \
++	subleq-tdep.o \
+ 	svr4-tls-tdep.o \
+ 	symfile-mem.o \
+ 	tic6x-linux-tdep.o \
+@@ -1692,6 +1693,7 @@
+ 	test-target.h \
+ 	thread-fsm.h \
+ 	thread-iter.h \
++	subleq-tdep.h \
+ 	tic6x-tdep.h \
+ 	tid-parse.h \
+ 	tilegx-tdep.h \
+@@ -1976,6 +1978,8 @@
+ 	sparc64-obsd-tdep.c \
+ 	sparc64-sol2-tdep.c \
+ 	sparc64-tdep.c \
++	subleq-linux-nat.c \
++	subleq-tdep.c \
+ 	svr4-tls-tdep.c \
+ 	tilegx-linux-nat.c \
+ 	tilegx-linux-tdep.c \
+--- a/gdb/configure.host
++++ b/gdb/configure.host
+@@ -173,6 +173,8 @@
+ 			gdb_host=sol2
+ 			;;
+ 
++subleq-*-linux*)	gdb_host=linux ;;
++
+ tilegx-*-linux*)	gdb_host=linux ;;
+ 
+ vax-*-netbsd* | vax-*-knetbsd*-gnu)
+--- a/gdb/configure.nat
++++ b/gdb/configure.nat
+@@ -55,12 +55,17 @@
+     *linux*)
+ 	NAT_FILE='config/nm-linux.h'
+ 	NATDEPFILES='inf-ptrace.o fork-child.o nat/fork-inferior.o \
+-		proc-service.o \
+-		linux-thread-db.o linux-nat.o nat/linux-osdata.o linux-fork.o \
++		linux-nat.o nat/linux-osdata.o linux-fork.o \
+ 		nat/linux-procfs.o nat/linux-ptrace.o nat/linux-waitpid.o \
+ 		nat/linux-personality.o nat/linux-namespaces.o'
+-	NAT_CDEPS='$(srcdir)/proc-service.list'
+-	LOADLIBES='-ldl $(RDYNAMIC)'
++	if test "$gdb_host_cpu" = subleq; then
++	    # The SUBLEQ libc has no compatible libthread_db register ABI.
++	    NATDEPFILES="${NATDEPFILES} subleq-linux-nat.o"
++	else
++	    NATDEPFILES="${NATDEPFILES} proc-service.o linux-thread-db.o"
++	    NAT_CDEPS='$(srcdir)/proc-service.list'
++	    LOADLIBES='-ldl $(RDYNAMIC)'
++	fi
+ 	;;
+     fbsd*)
+ 	NATDEPFILES='fork-child.o nat/fork-inferior.o inf-ptrace.o fbsd-nat.o'
+--- a/gdb/configure.tgt
++++ b/gdb/configure.tgt
+@@ -675,6 +675,11 @@
+ 	gdb_target_obs="tic6x-tdep.o"
+ 	;;
+ 
++subleq-*-linux*)
++	# Target: Linux NOMMU on little-endian SUBLEQ+.
++	gdb_target_obs="subleq-tdep.o linux-tdep.o"
++	;;
++
+ tilegx-*-linux*)
+ 	# Target: TILE-Gx
+ 	gdb_target_obs="tilegx-tdep.o tilegx-linux-tdep.o solib-svr4.o \
+--- a/gdb/event-top.c
++++ b/gdb/event-top.c
+@@ -1051,7 +1051,11 @@
+    instead, we have scoped_segv_handler_restore, which also makes it impossible
+    to accidentally forget to restore it to the original value.  */
+ 
++#ifdef __SUBLEQ__
++static void (*thread_local_segv_handler) (int);
++#else
+ static thread_local void (*thread_local_segv_handler) (int);
++#endif
+ 
+ static void handle_sigsegv (int sig);
+ 
+--- a/gdb/nat/fork-inferior.c
++++ b/gdb/nat/fork-inferior.c
+@@ -300,7 +300,7 @@
+      state, this doesn't work.  Also note that the vfork(2) call might
+      actually be a call to fork(2) due to the fact that autoconf will
+      ``#define vfork fork'' on certain platforms.  */
+-#if !(defined(__UCLIBC__) && defined(HAS_NOMMU))
++#if !defined(__SUBLEQ__) && !(defined(__UCLIBC__) && defined(HAS_NOMMU))
+   if (pre_trace_fun || debug_fork)
+     pid = fork ();
+   else
+--- a/gdb/nat/linux-ptrace.c
++++ b/gdb/nat/linux-ptrace.c
+@@ -19,6 +19,7 @@
+ #include "linux-ptrace.h"
+ #include "linux-procfs.h"
+ #include "linux-waitpid.h"
++#include <sched.h>
+ #ifdef HAVE_SYS_PROCFS_H
+ #include <sys/procfs.h>
+ #endif
+--- a/gdb/ui-file.h
++++ b/gdb/ui-file.h
+@@ -22,6 +22,9 @@
+ #include <string>
+ #include "ui-style.h"
+ 
++/* Some stdio implementations (e.g. uClibc) also define putc as a macro.  */
++#undef putc
++
+ /* The abstract ui_file base class.  */
+ 
+ class ui_file
+--- a/gdb/utils.c
++++ b/gdb/utils.c
+@@ -131,7 +131,11 @@
+ /* Warning hook pointer.  This has to be 'static' to avoid link
+    problems with thread-locals on AIX.  */
+ 
++#ifdef __SUBLEQ__
++static warning_hook_handler warning_hook;
++#else
+ static thread_local warning_hook_handler warning_hook;
++#endif
+ 
+ /* See utils.h.  */
+ 
+--- a/gdbsupport/print-utils.cc
++++ b/gdbsupport/print-utils.cc
+@@ -28,8 +28,16 @@
+ char *
+ get_print_cell (void)
+ {
++#ifdef __SUBLEQ__
++# ifdef CXX_STD_THREAD
++#  error SUBLEQ GDB must be built with --disable-threading (no host TLS)
++# endif
++  static char buf[NUMCELLS][PRINT_CELL_SIZE];
++  static int cell = 0;
++#else
+   static thread_local char buf[NUMCELLS][PRINT_CELL_SIZE];
+   static thread_local int cell = 0;
++#endif
+ 
+   if (++cell >= NUMCELLS)
+     cell = 0;
+--- a/gdbsupport/safe-strerror.cc
++++ b/gdbsupport/safe-strerror.cc
+@@ -44,7 +44,11 @@
+ const char *
+ safe_strerror (int errnum)
+ {
++#ifdef __SUBLEQ__
++  static char buf[1024];
++#else
+   static thread_local char buf[1024];
++#endif
+ 
+   char *res = select_strerror_r (strerror_r (errnum, buf, sizeof (buf)), buf);
+   if (res != nullptr)
+--- /dev/null
++++ b/gdb/subleq-tdep.h
+@@ -0,0 +1,39 @@
++/* Register layout for Linux SUBLEQ+.
++
++   Copyright (C) 2026 Free Software Foundation, Inc.
++
++   This file is part of GDB.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 3 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
++
++
++#ifndef GDB_SUBLEQ_TDEP_H
++#define GDB_SUBLEQ_TDEP_H
++
++/* The stable PTRACE_GETREGS payload is the de-negated r3..pc prefix
++   of pt_regs on SUBLEQ Linux.  These are GDB register numbers, not
++   byte addresses or DWARF register numbers.  */
++enum subleq_regnum
++{
++  SUBLEQ_R3_REGNUM = 0,
++  SUBLEQ_R20_REGNUM = 17,
++  SUBLEQ_R31_REGNUM = 28,
++  SUBLEQ_FP_REGNUM,
++  SUBLEQ_SP_REGNUM,
++  SUBLEQ_RA_REGNUM,
++  SUBLEQ_PC_REGNUM,
++  SUBLEQ_NUM_REGS
++};
++
++#endif /* GDB_SUBLEQ_TDEP_H */
+--- /dev/null
++++ b/gdb/subleq-tdep.c
+@@ -0,0 +1,259 @@
++/* Target-dependent code for little-endian Linux SUBLEQ+.
++
++   Copyright (C) 2026 Free Software Foundation, Inc.
++
++   This file is part of GDB.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 3 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
++
++
++#include "arch-utils.h"
++#include "auxv.h"
++#include "dwarf2/frame.h"
++#include "elf/common.h"
++#include "frame-unwind.h"
++#include "gdbarch.h"
++#include "gdb_bfd.h"
++
++#include "gdbcore.h"
++#include "gdbtypes.h"
++#include "linux-tdep.h"
++#include "objfiles.h"
++#include "osabi.h"
++#include "regcache.h"
++#include "solib.h"
++#include "subleq-tdep.h"
++#include "symtab.h"
++
++static const char *
++subleq_register_name (gdbarch *arch, int regnum)
++{
++  static const char *const names[] = {
++    "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10",
++    "r11", "r12", "r13", "r14", "r15", "r16", "r17", "r18",
++    "r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26",
++    "r27", "r28", "r29", "r30", "r31", "fp", "sp", "ra", "pc"
++  };
++  static_assert (ARRAY_SIZE (names) == SUBLEQ_NUM_REGS);
++  return names[regnum];
++}
++
++static type *
++subleq_register_type (gdbarch *arch, int regnum)
++{
++  if (regnum == SUBLEQ_PC_REGNUM || regnum == SUBLEQ_RA_REGNUM)
++    return builtin_type (arch)->builtin_func_ptr;
++  if (regnum == SUBLEQ_SP_REGNUM || regnum == SUBLEQ_FP_REGNUM)
++    return builtin_type (arch)->builtin_data_ptr;
++  return builtin_type (arch)->builtin_int32;
++}
++
++/* DWARF uses the word address from LLVM SubleqRegisterInfo.td, not
++   the ordinal of the register in Linux's saved context.  */
++static int
++subleq_dwarf2_reg_to_regnum (gdbarch *arch, int regnum)
++{
++  if (regnum >= 7 && regnum <= 35)
++    return SUBLEQ_R3_REGNUM + regnum - 7;
++  switch (regnum)
++    {
++    case 4: return SUBLEQ_SP_REGNUM;
++    case 5: return SUBLEQ_RA_REGNUM;
++    case 37: return SUBLEQ_FP_REGNUM;
++    default: return -1;
++    }
++}
++
++static CORE_ADDR
++subleq_skip_prologue (gdbarch *arch, CORE_ADDR pc)
++{
++  CORE_ADDR start;
++  if (find_pc_partial_function (pc, nullptr, &start, nullptr))
++    {
++      CORE_ADDR after = skip_prologue_using_sal (arch, start);
++      return std::max (pc, after);
++    }
++  return pc;
++}
++
++static enum return_value_convention
++subleq_return_value (gdbarch *arch, struct value *function,
++		     struct type *type, struct regcache *regcache,
++		     gdb_byte *readbuf, const gdb_byte *writebuf)
++{
++  if (type->length () > 4 || type->code () == TYPE_CODE_STRUCT
++      || type->code () == TYPE_CODE_UNION)
++    return RETURN_VALUE_STRUCT_CONVENTION;
++  if (readbuf != nullptr && type->length () != 0
++      && regcache->cooked_read_part (SUBLEQ_R20_REGNUM, 0,
++				     type->length (), readbuf) != REG_VALID)
++    throw_error (NOT_AVAILABLE_ERROR, _("SUBLEQ return register unavailable"));
++  if (writebuf != nullptr)
++    error (_("Writing a SUBLEQ return value is not supported"));
++  return RETURN_VALUE_REGISTER_CONVENTION;
++}
++
++static int
++subleq_breakpoint_kind_from_pc (gdbarch *arch, CORE_ADDR *pc)
++{
++  return 0;
++}
++
++static const gdb_byte *
++subleq_sw_breakpoint_from_kind (gdbarch *arch, int kind, int *size)
++{
++  *size = 0;
++  return nullptr;
++}
++
++static int
++subleq_unsupported_memory_breakpoint (gdbarch *arch, bp_target_info *bp)
++{
++  error (_("SUBLEQ Linux has no process-local software breakpoint"));
++}
++
++/* If there is no DWARF frame information, expose the stopped frame,
++   but do not guess the caller from arbitrary words in the stack.  */
++static void
++subleq_outermost_frame_id (const frame_info_ptr &frame, void **cache,
++			    frame_id *id)
++{
++  *id = outer_frame_id;
++}
++
++static struct value *
++subleq_outermost_prev_register (const frame_info_ptr &frame, void **cache,
++				int regnum)
++{
++  return frame_unwind_got_optimized (frame, regnum);
++}
++
++static const frame_unwind_legacy subleq_outermost_unwind (
++  "subleq outermost",
++  NORMAL_FRAME,
++  FRAME_UNWIND_ARCH,
++  default_frame_unwind_stop_reason,
++  subleq_outermost_frame_id,
++  subleq_outermost_prev_register,
++  nullptr,
++  default_frame_sniffer
++);
++
++/* The kernel relocates ELF images itself.  There is no user loader
++   rendezvous on which to install an SVR4 event breakpoint.  */
++struct subleq_linux_solib_ops final : solib_ops
++{
++  using solib_ops::solib_ops;
++
++  void create_inferior_hook (int from_tty) const override;
++  void relocate_section_addresses (solib &, target_section *) const override
++  { gdb_assert_not_reached ("No SUBLEQ shared library list"); }
++  owning_intrusive_list<solib> current_sos () const override
++  { return {}; }
++};
++
++void
++subleq_linux_solib_ops::create_inferior_hook (int from_tty) const
++{
++  bfd *exec = m_pspace->exec_bfd ();
++  if (exec == nullptr || (bfd_get_file_flags (exec) & DYNAMIC) == 0)
++    return;
++
++  CORE_ADDR entry;
++  if (target_auxv_search (AT_ENTRY, &entry) <= 0)
++    return;
++
++  CORE_ADDR bias = entry - bfd_get_start_address (exec);
++  objfile *obj = m_pspace->symfile_object_file;
++  if (obj != nullptr)
++    objfile_relocate (obj, std::vector<CORE_ADDR> (obj->section_offsets.size (),
++						 bias));
++  else
++    for (asection *sec : gdb_bfd_sections (exec))
++      exec_set_section_address (bfd_get_filename (exec), sec->index,
++				bfd_section_vma (sec) + bias);
++}
++
++static solib_ops_up
++subleq_linux_make_solib_ops (program_space *pspace)
++{
++  return std::make_unique<subleq_linux_solib_ops> (pspace);
++}
++
++static bool
++subleq_linux_has_shared_address_space (gdbarch *arch)
++{
++  return true;
++}
++
++/* GDB's run/starti path writes the current PC back before resuming.
++   The read-only ptrace ABI can accept that no-op, but not a jump.  */
++static void
++subleq_linux_write_pc (regcache *regs, CORE_ADDR pc)
++{
++  if (pc != regcache_read_pc (regs))
++    error (_("Writing the SUBLEQ PC is not supported"));
++}
++
++static void
++subleq_linux_init_abi (gdbarch_info info, gdbarch *arch)
++{
++  linux_init_abi (info, arch, 0);
++  set_gdbarch_write_pc (arch, subleq_linux_write_pc);
++  set_gdbarch_has_shared_address_space (arch,
++				       subleq_linux_has_shared_address_space);
++  set_gdbarch_make_solib_ops (arch, subleq_linux_make_solib_ops);
++}
++
++static gdbarch *
++subleq_gdbarch_init (gdbarch_info info, gdbarch_list *arches)
++{
++  if (info.byte_order != BFD_ENDIAN_LITTLE)
++    return nullptr;
++  if (gdbarch_list *candidate = gdbarch_list_lookup_by_info (arches, &info))
++    return candidate->gdbarch;
++
++  gdbarch *arch = gdbarch_alloc (&info, gdbarch_tdep_up ());
++  set_gdbarch_ptr_bit (arch, 32);
++  set_gdbarch_long_bit (arch, 32);
++  set_gdbarch_long_double_bit (arch, 64);
++  set_gdbarch_long_double_format (arch, floatformats_ieee_double);
++  set_gdbarch_max_insn_length (arch, 12);
++  set_gdbarch_num_regs (arch, SUBLEQ_NUM_REGS);
++  set_gdbarch_sp_regnum (arch, SUBLEQ_SP_REGNUM);
++  set_gdbarch_pc_regnum (arch, SUBLEQ_PC_REGNUM);
++  set_gdbarch_register_name (arch, subleq_register_name);
++  set_gdbarch_register_type (arch, subleq_register_type);
++  set_gdbarch_dwarf2_reg_to_regnum (arch, subleq_dwarf2_reg_to_regnum);
++  set_gdbarch_skip_prologue (arch, subleq_skip_prologue);
++  set_gdbarch_inner_than (arch, core_addr_lessthan);
++  set_gdbarch_return_value (arch, subleq_return_value);
++  set_gdbarch_breakpoint_kind_from_pc (arch, subleq_breakpoint_kind_from_pc);
++  set_gdbarch_sw_breakpoint_from_kind (arch, subleq_sw_breakpoint_from_kind);
++  set_gdbarch_memory_insert_breakpoint (arch,
++				       subleq_unsupported_memory_breakpoint);
++  set_gdbarch_memory_remove_breakpoint (arch,
++				       subleq_unsupported_memory_breakpoint);
++  gdbarch_init_osabi (info, arch);
++  dwarf2_append_unwinders (arch);
++  frame_unwind_append_unwinder (arch, &subleq_outermost_unwind);
++  return arch;
++}
++
++INIT_GDB_FILE (subleq_tdep)
++{
++  gdbarch_register (bfd_arch_subleq, subleq_gdbarch_init);
++  gdbarch_register_osabi (bfd_arch_subleq, 0, GDB_OSABI_LINUX,
++			 subleq_linux_init_abi);
++}
+--- /dev/null
++++ b/gdb/subleq-linux-nat.c
+@@ -0,0 +1,85 @@
++/* Native Linux support for SUBLEQ+.
++
++   Copyright (C) 2026 Free Software Foundation, Inc.
++
++   This file is part of GDB.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 3 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
++
++
++#include "linux-nat.h"
++#include "nat/linux-ptrace.h"
++#include "regcache.h"
++#include "subleq-tdep.h"
++
++class subleq_linux_nat_target final : public linux_nat_target
++{
++public:
++  void fetch_registers (regcache *regs, int regnum) override;
++  void store_registers (regcache *regs, int regnum) override;
++  int can_do_single_step () override { return 0; }
++  void low_resume (ptid_t ptid, int step, gdb_signal sig) override;
++  int set_syscall_catchpoint (int pid, bool needed, int any_count,
++			      gdb::array_view<const int> counts) override;
++};
++
++static subleq_linux_nat_target the_subleq_linux_nat_target;
++
++void
++subleq_linux_nat_target::fetch_registers (regcache *regs, int regnum)
++{
++  uint32_t values[SUBLEQ_NUM_REGS];
++  int tid = get_ptrace_pid (regs->ptid ());
++  if (ptrace (PTRACE_GETREGS, tid, (PTRACE_TYPE_ARG3) 0,
++	      (PTRACE_TYPE_ARG4) values) == -1)
++    perror_with_name (_("Couldn't get SUBLEQ registers (PTRACE_GETREGS)"));
++
++  for (int i = 0; i < SUBLEQ_NUM_REGS; ++i)
++    if (regnum == -1 || regnum == i)
++      regs->raw_supply (i, &values[i]);
++}
++
++void
++subleq_linux_nat_target::store_registers (regcache *regs, int regnum)
++{
++  error (_("Writing SUBLEQ registers is not supported"));
++}
++
++void
++subleq_linux_nat_target::low_resume (ptid_t ptid, int step, gdb_signal sig)
++{
++  if (step)
++    error (_("SUBLEQ Linux does not support single-stepping"));
++  linux_nat_target::low_resume (ptid, step, sig);
++}
++
++int
++subleq_linux_nat_target::set_syscall_catchpoint
++  (int pid, bool needed, int any_count, gdb::array_view<const int> counts)
++{
++  return 1;
++}
++
++/* This configuration uses Linux LWPs without libthread_db.  */
++bool
++thread_db_notice_clone (ptid_t parent, ptid_t child)
++{
++  return false;
++}
++
++INIT_GDB_FILE (subleq_linux_nat)
++{
++  linux_target = &the_subleq_linux_nat_target;
++  add_inf_child_target (&the_subleq_linux_nat_target);
++}

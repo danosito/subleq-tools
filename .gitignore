@@ -1,0 +1,7 @@
+downloads/
+work/
+*.ext4
+*.raw
+*.log
+*.tar
+.DS_Store

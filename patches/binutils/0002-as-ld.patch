@@ -1,0 +1,1119 @@
+diff --git a/bfd/bfd-in2.h b/bfd/bfd-in2.h
+index 52e87fc..96ee374 100644
+--- a/bfd/bfd-in2.h
++++ b/bfd/bfd-in2.h
+@@ -7322,6 +7322,9 @@ enum bfd_reloc_code_real
+   BFD_RELOC_LARCH_TLS_GD_PCADD_LO12,
+   BFD_RELOC_LARCH_TLS_DESC_PCADD_HI20,
+   BFD_RELOC_LARCH_TLS_DESC_PCADD_LO12,
++/* SUBLEQ 32-bit negated absolute relocation.  */
++  BFD_RELOC_SUBLEQ_NEG32,
++
+   BFD_RELOC_UNUSED
+ };
+ typedef enum bfd_reloc_code_real bfd_reloc_code_real_type;
+diff --git a/bfd/elf32-subleq.c b/bfd/elf32-subleq.c
+index 16d72bd..fab3168 100644
+--- a/bfd/elf32-subleq.c
++++ b/bfd/elf32-subleq.c
+@@ -8,36 +8,22 @@
+ #include "elf/i386.h"
+ #include "elf/subleq.h"
+ 
+-/* Canonicalize REL records for inspection.  Do not implement link-time
+-   relocation: LLD (including its negated-addend support) is required.  */
+-static bfd_reloc_status_type
+-subleq_unsupported_reloc (bfd *abfd ATTRIBUTE_UNUSED,
+-                         arelent *reloc ATTRIBUTE_UNUSED,
+-                         asymbol *symbol ATTRIBUTE_UNUSED,
+-                         void *contents ATTRIBUTE_UNUSED,
+-                         asection *section ATTRIBUTE_UNUSED,
+-                         bfd *output_bfd ATTRIBUTE_UNUSED,
+-                         char **message ATTRIBUTE_UNUSED)
+-{
+-  return bfd_reloc_notsupported;
+-}
+-
+ static reloc_howto_type subleq_howto_none =
+   HOWTO (R_386_NONE, 0, 0, 0, false, 0, complain_overflow_dont,
+-         subleq_unsupported_reloc, "R_386_NONE", false, 0, 0, false);
++         bfd_elf_generic_reloc, "R_386_NONE", false, 0, 0, false);
+ 
+ #define SUBLEQ_REL (0xffffffff)
+ static reloc_howto_type subleq_howto_32 =
+   HOWTO (R_386_32, 0, 4, 32, false, 0, complain_overflow_dont,
+-         subleq_unsupported_reloc, "R_386_32", true, SUBLEQ_REL,
++         bfd_elf_generic_reloc, "R_386_32", true, SUBLEQ_REL,
+          SUBLEQ_REL, false);
+ static reloc_howto_type subleq_howto_relative =
+   HOWTO (R_386_RELATIVE, 0, 4, 32, false, 0, complain_overflow_dont,
+-         subleq_unsupported_reloc, "R_386_RELATIVE", true, SUBLEQ_REL,
++         bfd_elf_generic_reloc, "R_386_RELATIVE", true, SUBLEQ_REL,
+          SUBLEQ_REL, false);
+ static reloc_howto_type subleq_howto_neg32 =
+   HOWTO (R_SUBLEQ_NEG32, 0, 4, 32, false, 0, complain_overflow_dont,
+-         subleq_unsupported_reloc, "R_SUBLEQ_NEG32", true, SUBLEQ_REL,
++         bfd_elf_generic_reloc, "R_SUBLEQ_NEG32", true, SUBLEQ_REL,
+          SUBLEQ_REL, false);
+ #undef SUBLEQ_REL
+ 
+@@ -68,6 +54,353 @@ subleq_info_to_howto_rel (bfd *abfd, arelent *cache_ptr,
+   return false;
+ }
+ 
++static reloc_howto_type *
++subleq_reloc_type_lookup (bfd *abfd ATTRIBUTE_UNUSED,
++                          bfd_reloc_code_real_type code)
++{
++  switch (code)
++    {
++    case BFD_RELOC_NONE: return &subleq_howto_none;
++    case BFD_RELOC_32: return &subleq_howto_32;
++    case BFD_RELOC_SUBLEQ_NEG32: return &subleq_howto_neg32;
++    default: return NULL;
++    }
++}
++
++static reloc_howto_type *
++subleq_reloc_name_lookup (bfd *abfd ATTRIBUTE_UNUSED, const char *name)
++{
++  reloc_howto_type *howtos[] = { &subleq_howto_none, &subleq_howto_32,
++                                &subleq_howto_relative, &subleq_howto_neg32 };
++  for (unsigned int i = 0; i < sizeof (howtos) / sizeof (howtos[0]); ++i)
++    if (strcasecmp (name, howtos[i]->name) == 0)
++      return howtos[i];
++  return NULL;
++}
++
++/* The kernel loader directly supplies these symbols.  An arbitrary undefined
++   symbol must never quietly turn into a runtime import.  */
++static const char *const subleq_linux_exports[] = {
++#include "subleq-linux-exports.h"
++};
++
++static int
++subleq_compare_export (const void *key, const void *item)
++{
++  return strcmp (key, *(const char *const *) item);
++}
++
++static bool
++subleq_kernel_import (const char *name)
++{
++  return bsearch (name, subleq_linux_exports,
++                  sizeof (subleq_linux_exports) / sizeof (subleq_linux_exports[0]),
++                  sizeof (subleq_linux_exports[0]), subleq_compare_export) != NULL;
++}
++
++static bool
++subleq_link_error (bfd *abfd, asection *sec, const char *msg)
++{
++  _bfd_error_handler (_("%pB:(%pA): %s"), abfd, sec, msg);
++  bfd_set_error (bfd_error_bad_value);
++  return false;
++}
++
++static struct elf_link_hash_entry *
++subleq_global_symbol (bfd *abfd, unsigned long idx)
++{
++  struct elf_link_hash_entry **hashes = elf_sym_hashes (abfd);
++  if (hashes == NULL)
++    return NULL;
++  struct elf_link_hash_entry *h = hashes[idx - elf_symtab_hdr (abfd).sh_info];
++  while (h != NULL && (h->root.type == bfd_link_hash_indirect
++                       || h->root.type == bfd_link_hash_warning))
++    h = (struct elf_link_hash_entry *) h->root.u.i.link;
++  return h;
++}
++
++static bool
++subleq_create_dynamic_sections (bfd *dynobj, struct bfd_link_info *info)
++{
++  flagword flags = get_elf_backend_data (dynobj)->dynamic_sec_flags;
++  asection *rel = bfd_make_section_anyway_with_flags (dynobj, ".rel.dyn",
++                                                       flags | SEC_READONLY);
++  if (rel == NULL || !bfd_set_section_alignment (rel, 2))
++    return false;
++  elf_section_type (rel) = SHT_REL;
++  if (elf_hash_table (info)->srelrdyn != NULL)
++    elf_section_type (elf_hash_table (info)->srelrdyn) = SHT_RELR;
++  return true;
++}
++
++static bool
++subleq_check_relocs (bfd *abfd, struct bfd_link_info *info, asection *sec,
++                    const Elf_Internal_Rela *relocs)
++{
++  if (!bfd_link_pie (info))
++    return true;
++
++  struct elf_link_hash_table *htab = elf_hash_table (info);
++  if (!bfd_elf_link_create_dynamic_sections (abfd, info))
++    return false;
++  asection *sr = bfd_get_linker_section (htab->dynobj, ".rel.dyn");
++  asection *srr = htab->srelrdyn;
++  Elf_Internal_Shdr *symtab = &elf_symtab_hdr (abfd);
++  struct sym_cache local_cache = { 0 };
++  unsigned long symcount = symtab->sh_size / sizeof (Elf32_External_Sym);
++
++  for (unsigned int i = 0; i < sec->reloc_count; ++i)
++    {
++      const Elf_Internal_Rela *r = relocs + i;
++      unsigned int type = ELF32_R_TYPE (r->r_info);
++      unsigned long idx = ELF32_R_SYM (r->r_info);
++      bool symbolic = false;
++      if (type == R_386_NONE)
++        continue;
++      if (type != R_386_32 && type != R_SUBLEQ_NEG32)
++        return _bfd_unrecognized_reloc (abfd, sec, type);
++      if (idx >= symcount)
++        return subleq_link_error (abfd, sec, _("invalid relocation symbol index"));
++      if (idx < symtab->sh_info)
++        {
++          const Elf_Internal_Sym *s = bfd_sym_from_r_symndx (&local_cache, abfd, idx);
++          if (s == NULL)
++            return false;
++          if (s->st_shndx == SHN_ABS || idx == 0)
++            continue;
++          if (ELF_ST_TYPE (s->st_info) == STT_TLS
++              || ELF_ST_TYPE (s->st_info) == STT_GNU_IFUNC)
++            return subleq_link_error (abfd, sec, _("TLS and IFUNC are not supported"));
++        }
++      else
++        {
++          struct elf_link_hash_entry *h = subleq_global_symbol (abfd, idx);
++          if (h == NULL)
++            return subleq_link_error (abfd, sec, _("invalid global relocation symbol"));
++          if (h->type == STT_TLS || h->type == STT_GNU_IFUNC)
++            return subleq_link_error (abfd, sec, _("TLS and IFUNC are not supported"));
++          if (h->root.type == bfd_link_hash_defined || h->root.type == bfd_link_hash_defweak)
++            {
++              if (bfd_is_abs_section (h->root.u.def.section))
++                continue;
++            }
++          else if (h->root.type == bfd_link_hash_undefined
++                   || h->root.type == bfd_link_hash_undefweak)
++            {
++              symbolic = (ELF_ST_VISIBILITY (h->other) == STV_DEFAULT
++                          && subleq_kernel_import (h->root.root.string));
++              if (!symbolic)
++                continue; /* Final link diagnoses unknown strong undefineds.  */
++              if (!bfd_elf_link_record_dynamic_symbol (info, h))
++                return false;
++            }
++        }
++      if ((r->r_offset & 3) != 0)
++        return subleq_link_error (abfd, sec, _("unaligned runtime relocation"));
++      if ((sec->flags & SEC_READONLY) != 0)
++        info->flags |= DF_TEXTREL;
++      asection *out = !symbolic && type == R_386_32 && srr != NULL ? srr : sr;
++      bfd_size_type entsize = out == srr ? 4 : sizeof (Elf32_External_Rel);
++      if (out->size > (bfd_size_type) -1 - entsize)
++        return subleq_link_error (abfd, sec, _("dynamic relocation section too large"));
++      out->size += entsize;
++    }
++  return true;
++}
++
++static bool
++subleq_size_dynamic_sections (struct bfd_link_info *info)
++{
++  struct elf_link_hash_table *htab = elf_hash_table (info);
++  if (!htab->dynamic_sections_created)
++    return true;
++  asection *sr = bfd_get_linker_section (htab->dynobj, ".rel.dyn");
++  asection *srr = htab->srelrdyn;
++  if (sr->size != 0)
++    {
++      sr->contents = bfd_zmalloc (sr->size);
++      if (sr->contents == NULL
++          || !_bfd_elf_add_dynamic_entry (info, DT_REL, 0)
++          || !_bfd_elf_add_dynamic_entry (info, DT_RELSZ, 0)
++          || !_bfd_elf_add_dynamic_entry (info, DT_RELENT, sizeof (Elf32_External_Rel)))
++        return false;
++    }
++  if (srr != NULL && srr->size != 0)
++    {
++      srr->contents = bfd_zmalloc (srr->size);
++      if (srr->contents == NULL)
++        return false;
++    }
++  if (info->flags & DF_TEXTREL)
++    return _bfd_elf_add_dynamic_entry (info, DT_TEXTREL, 0);
++  return true;
++}
++
++static bool
++subleq_link_add_symbols (bfd *abfd, struct bfd_link_info *info)
++{
++  if (bfd_link_dll (info) || (abfd->flags & DYNAMIC) != 0)
++    {
++      _bfd_error_handler (_("%pB: SUBLEQ Linux ld does not support shared objects"), abfd);
++      bfd_set_error (bfd_error_invalid_operation);
++      return false;
++    }
++  if (bfd_link_pie (info) && !info->nointerp)
++    {
++      _bfd_error_handler (_("SUBLEQ Linux PIE requires --no-dynamic-linker"));
++      bfd_set_error (bfd_error_invalid_operation);
++      return false;
++    }
++  return bfd_elf_link_add_symbols (abfd, info);
++}
++
++static int
++subleq_relocate_section (struct bfd_link_info *info, bfd *abfd, asection *sec,
++                         bfd_byte *contents, Elf_Internal_Rela *relocs,
++                         Elf_Internal_Sym *local_syms, asection **local_sections)
++{
++  Elf_Internal_Shdr *symtab = &elf_symtab_hdr (abfd);
++  unsigned long symcount = symtab->sh_size / sizeof (Elf32_External_Sym);
++  struct elf_link_hash_table *htab = elf_hash_table (info);
++  Elf_Internal_Rela *end = relocs + sec->reloc_count;
++
++  for (Elf_Internal_Rela *r = relocs; r < end; ++r)
++    {
++      unsigned int type = ELF32_R_TYPE (r->r_info);
++      unsigned long idx = ELF32_R_SYM (r->r_info);
++      struct elf_link_hash_entry *h = NULL;
++      asection *def = NULL;
++      bfd_vma value = 0;
++      bool symbolic = false;
++
++      if (type == R_386_NONE)
++        continue;
++      if (type != R_386_32 && type != R_SUBLEQ_NEG32)
++        return _bfd_unrecognized_reloc (abfd, sec, type);
++      if (idx >= symcount || !bfd_reloc_offset_in_range (&subleq_howto_32, abfd, sec, r->r_offset))
++        return subleq_link_error (abfd, sec, _("invalid relocation offset or symbol index"));
++
++      bfd_byte *where = contents + r->r_offset;
++      if (r->r_addend != 0)
++        return subleq_link_error (abfd, sec, _("unexpected SUBLEQ RELA addend"));
++      bfd_vma addend = bfd_get_32 (abfd, where);
++      if (idx < symtab->sh_info)
++        {
++          Elf_Internal_Sym *s = local_syms + idx;
++          def = idx == 0 ? bfd_abs_section_ptr : local_sections[idx];
++          if (def == NULL || def->output_section == NULL)
++            return subleq_link_error (abfd, sec, _("invalid local relocation section"));
++          if (bfd_link_relocatable (info))
++            {
++              if (ELF_ST_TYPE (s->st_info) == STT_SECTION)
++                bfd_put_32 (abfd, addend + def->output_offset, where);
++              continue;
++            }
++          value = addend + s->st_value;
++          if (ELF_ST_TYPE (s->st_info) == STT_SECTION)
++            value = _bfd_elf_rel_local_sym (info->output_bfd, s, &def, addend);
++          value += def->output_section->vma + def->output_offset;
++        }
++      else
++        {
++          h = subleq_global_symbol (abfd, idx);
++          if (h == NULL)
++            return subleq_link_error (abfd, sec, _("invalid global relocation symbol"));
++          if (bfd_link_relocatable (info))
++            continue;
++          if (h->root.type == bfd_link_hash_defined || h->root.type == bfd_link_hash_defweak)
++            {
++              def = h->root.u.def.section;
++              if (def == NULL || def->output_section == NULL)
++                return subleq_link_error (abfd, sec, _("invalid global relocation section"));
++              value = addend + h->root.u.def.value + def->output_section->vma + def->output_offset;
++            }
++          else if (bfd_link_pie (info) && (sec->flags & SEC_ALLOC) != 0
++                   && ELF_ST_VISIBILITY (h->other) == STV_DEFAULT
++                   && subleq_kernel_import (h->root.root.string))
++            {
++              if (h->dynindx <= 0 || h->dynindx > 0xffffff)
++                return subleq_link_error (abfd, sec, _("missing runtime symbol index"));
++              symbolic = true;
++              value = addend;
++            }
++          else if (h->root.type == bfd_link_hash_undefweak)
++            value = addend;
++          else
++            {
++              info->callbacks->undefined_symbol (info, h->root.root.string, abfd,
++                                                 sec, r->r_offset, true);
++              return false;
++            }
++        }
++
++      if (def != NULL && discarded_section (def))
++        RELOC_AGAINST_DISCARDED_SECTION (info, abfd, sec, r, 1, end, R_386_NONE,
++                                         &subleq_howto_32, 0, contents);
++
++      /* A final word stores S+A, or -(S+A).  Dynamic NEG32 records subtract
++         the bias (index zero) or the kernel import address (symbolic).  */
++      bfd_put_32 (abfd, type == R_SUBLEQ_NEG32 ? 0 - value : value, where);
++      if (!bfd_link_pie (info) || (sec->flags & SEC_ALLOC) == 0
++          || (!symbolic && (def == NULL || bfd_is_abs_section (def))))
++        continue;
++
++      bfd_vma offset = _bfd_elf_section_offset (info->output_bfd, info, sec, r->r_offset);
++      if (offset == (bfd_vma) -1 || offset == (bfd_vma) -2)
++        return subleq_link_error (abfd, sec, _("unsupported runtime relocation in adjusted section"));
++      offset += sec->output_section->vma + sec->output_offset;
++      if ((offset & 3) != 0 || offset > 0xffffffffu)
++        return subleq_link_error (abfd, sec, _("runtime relocation address is not a SUBLEQ word"));
++      asection *srr = htab->srelrdyn;
++      if (!symbolic && type == R_386_32 && srr != NULL)
++        {
++          /* Address entries are valid RELR and halve the size of these
++             records without depending on an iterative bitmap layout pass.  */
++          if (srr->reloc_count >= srr->size / 4)
++            return subleq_link_error (abfd, sec, _("RELR size changed after layout"));
++          bfd_put_32 (info->output_bfd, offset, srr->contents + 4 * srr->reloc_count++);
++        }
++      else
++        {
++          asection *sr = bfd_get_linker_section (htab->dynobj, ".rel.dyn");
++          Elf_Internal_Rela dyn = { 0 };
++          if (sr == NULL || sr->reloc_count >= sr->size / sizeof (Elf32_External_Rel))
++            return subleq_link_error (abfd, sec, _("REL size changed after layout"));
++          dyn.r_offset = offset;
++          dyn.r_info = ELF32_R_INFO (symbolic ? h->dynindx : 0,
++                                    !symbolic && type == R_386_32 ? R_386_RELATIVE : type);
++          _bfd_elf_append_rel (info->output_bfd, sr, &dyn);
++        }
++    }
++  return true;
++}
++
++static int
++subleq_compare_relr (const void *p, const void *q)
++{
++  bfd_vma a = bfd_getl32 (p), b = bfd_getl32 (q);
++  return a > b ? 1 : a < b ? -1 : 0;
++}
++
++static bool
++subleq_finish_dynamic_sections (struct bfd_link_info *info,
++                                bfd_byte *contents ATTRIBUTE_UNUSED)
++{
++  struct elf_link_hash_table *htab = elf_hash_table (info);
++  asection *sr = bfd_get_linker_section (htab->dynobj, ".rel.dyn");
++  asection *srr = htab->srelrdyn;
++  if (sr->size / sizeof (Elf32_External_Rel) != sr->reloc_count)
++    return subleq_link_error (htab->dynobj, sr, _("REL count changed after layout"));
++  if (srr != NULL)
++    {
++      if (srr->size / 4 != srr->reloc_count)
++        return subleq_link_error (htab->dynobj, srr, _("RELR count changed after layout"));
++      if (srr->reloc_count != 0)
++        qsort (srr->contents, srr->reloc_count, 4, subleq_compare_relr);
++    }
++  return true;
++}
++
+ #define ELF_ARCH                        bfd_arch_subleq
+ #define ELF_MACHINE_CODE                EM_SUBLEQ
+ #define ELF_MAXPAGESIZE                 0x1000
+@@ -75,7 +408,16 @@ subleq_info_to_howto_rel (bfd *abfd, arelent *cache_ptr,
+ #define TARGET_LITTLE_NAME              "elf32-subleq"
+ #define USE_REL                         1
+ #define elf_info_to_howto_rel           subleq_info_to_howto_rel
+-#define bfd_elf32_bfd_reloc_type_lookup  _bfd_norelocs_bfd_reloc_type_lookup
+-#define bfd_elf32_bfd_reloc_name_lookup  _bfd_norelocs_bfd_reloc_name_lookup
++#define bfd_elf32_bfd_reloc_type_lookup  subleq_reloc_type_lookup
++#define bfd_elf32_bfd_reloc_name_lookup  subleq_reloc_name_lookup
++
++#define bfd_elf32_bfd_link_add_symbols   subleq_link_add_symbols
++#define elf_backend_create_dynamic_sections subleq_create_dynamic_sections
++#define elf_backend_check_relocs        subleq_check_relocs
++#define elf_backend_late_size_sections  subleq_size_dynamic_sections
++#define elf_backend_relocate_section    subleq_relocate_section
++#define elf_backend_finish_dynamic_sections subleq_finish_dynamic_sections
++#define elf_backend_can_gc_sections     1
++#define elf_backend_default_execstack   0
+ 
+ #include "elf32-target.h"
+diff --git a/bfd/libbfd.h b/bfd/libbfd.h
+index 27bc087..1f2db2a 100644
+--- a/bfd/libbfd.h
++++ b/bfd/libbfd.h
+@@ -3452,6 +3452,7 @@ static const char *const bfd_reloc_code_real_names[] = { "@@uninitialized@@",
+   "BFD_RELOC_LARCH_TLS_GD_PCADD_LO12",
+   "BFD_RELOC_LARCH_TLS_DESC_PCADD_HI20",
+   "BFD_RELOC_LARCH_TLS_DESC_PCADD_LO12",
++  "BFD_RELOC_SUBLEQ_NEG32",
+  "@@overflow: BFD_RELOC_UNUSED@@",
+ };
+ #endif
+diff --git a/bfd/reloc.c b/bfd/reloc.c
+index 6b9e00d..e0540ea 100644
+--- a/bfd/reloc.c
++++ b/bfd/reloc.c
+@@ -7877,6 +7877,11 @@ ENUMX
+ ENUMDOC
+   LARCH relocations.
+ 
++ENUM
++  BFD_RELOC_SUBLEQ_NEG32
++ENUMDOC
++  SUBLEQ 32-bit negated absolute relocation.
++
+ ENDSENUM
+   BFD_RELOC_UNUSED
+ 
+diff --git a/bfd/subleq-linux-exports.h b/bfd/subleq-linux-exports.h
+new file mode 100644
+index 0000000..593b740
+--- /dev/null
++++ b/bfd/subleq-linux-exports.h
+@@ -0,0 +1,275 @@
++/* Userspace runtime exports in the SUBLEQ Linux binfmt loader.
++   SOURCE: arch/subleq/kernel/binfmt_elf_subleq.c
++   SHA256: 507499a5a51161ceec720eecf0aed9f2840888f89835c46fefabc2d9ce51e2e5
++   SPDX-License-Identifier: GPL-3.0-or-later */
++  "__adddf3",
++  "__addsf3",
++  "__ashldi3",
++  "__ashrdi3",
++  "__divdc3",
++  "__divdf3",
++  "__divdi3",
++  "__divsc3",
++  "__divsf3",
++  "__eqdf2",
++  "__eqsf2",
++  "__extendsfdf2",
++  "__fixdfdi",
++  "__fixdfsi",
++  "__fixsfdi",
++  "__fixsfsi",
++  "__fixunsdfdi",
++  "__fixunsdfsi",
++  "__fixunssfdi",
++  "__fixunssfsi",
++  "__floatdidf",
++  "__floatdisf",
++  "__floatsidf",
++  "__floatsisf",
++  "__floatundidf",
++  "__floatundisf",
++  "__floatunsidf",
++  "__floatunsisf",
++  "__gedf2",
++  "__gesf2",
++  "__gtdf2",
++  "__gtsf2",
++  "__ledf2",
++  "__lesf2",
++  "__lshrdi3",
++  "__ltdf2",
++  "__ltsf2",
++  "__moddi3",
++  "__muldc3",
++  "__muldf3",
++  "__mulsc3",
++  "__mulsf3",
++  "__nedf2",
++  "__nesf2",
++  "__subdf3",
++  "__subleq_and",
++  "__subleq_and_b0",
++  "__subleq_and_b1",
++  "__subleq_and_b10",
++  "__subleq_and_b11",
++  "__subleq_and_b12",
++  "__subleq_and_b13",
++  "__subleq_and_b14",
++  "__subleq_and_b15",
++  "__subleq_and_b16",
++  "__subleq_and_b17",
++  "__subleq_and_b18",
++  "__subleq_and_b19",
++  "__subleq_and_b2",
++  "__subleq_and_b20",
++  "__subleq_and_b21",
++  "__subleq_and_b22",
++  "__subleq_and_b23",
++  "__subleq_and_b24",
++  "__subleq_and_b25",
++  "__subleq_and_b26",
++  "__subleq_and_b27",
++  "__subleq_and_b28",
++  "__subleq_and_b29",
++  "__subleq_and_b3",
++  "__subleq_and_b30",
++  "__subleq_and_b4",
++  "__subleq_and_b5",
++  "__subleq_and_b6",
++  "__subleq_and_b7",
++  "__subleq_and_b8",
++  "__subleq_and_b9",
++  "__subleq_lb",
++  "__subleq_lb_b0",
++  "__subleq_lb_b1",
++  "__subleq_lb_b2",
++  "__subleq_lb_b3",
++  "__subleq_lh",
++  "__subleq_lh_h0",
++  "__subleq_lh_h1",
++  "__subleq_memcpy",
++  "__subleq_memcpy_aligned",
++  "__subleq_memmove",
++  "__subleq_memmove_aligned",
++  "__subleq_memset",
++  "__subleq_memset_aligned",
++  "__subleq_mul",
++  "__subleq_or",
++  "__subleq_or_b0",
++  "__subleq_or_b1",
++  "__subleq_or_b10",
++  "__subleq_or_b11",
++  "__subleq_or_b12",
++  "__subleq_or_b13",
++  "__subleq_or_b14",
++  "__subleq_or_b15",
++  "__subleq_or_b16",
++  "__subleq_or_b17",
++  "__subleq_or_b18",
++  "__subleq_or_b19",
++  "__subleq_or_b2",
++  "__subleq_or_b20",
++  "__subleq_or_b21",
++  "__subleq_or_b22",
++  "__subleq_or_b23",
++  "__subleq_or_b24",
++  "__subleq_or_b25",
++  "__subleq_or_b26",
++  "__subleq_or_b27",
++  "__subleq_or_b28",
++  "__subleq_or_b29",
++  "__subleq_or_b3",
++  "__subleq_or_b30",
++  "__subleq_or_b4",
++  "__subleq_or_b5",
++  "__subleq_or_b6",
++  "__subleq_or_b7",
++  "__subleq_or_b8",
++  "__subleq_or_b9",
++  "__subleq_sb",
++  "__subleq_sb_b0",
++  "__subleq_sb_b1",
++  "__subleq_sb_b2",
++  "__subleq_sb_b3",
++  "__subleq_sdivrem",
++  "__subleq_sdivrem64",
++  "__subleq_sh",
++  "__subleq_sh_h0",
++  "__subleq_sh_h1",
++  "__subleq_shl",
++  "__subleq_shl_1",
++  "__subleq_shl_10",
++  "__subleq_shl_11",
++  "__subleq_shl_12",
++  "__subleq_shl_13",
++  "__subleq_shl_14",
++  "__subleq_shl_15",
++  "__subleq_shl_16",
++  "__subleq_shl_17",
++  "__subleq_shl_18",
++  "__subleq_shl_19",
++  "__subleq_shl_2",
++  "__subleq_shl_20",
++  "__subleq_shl_21",
++  "__subleq_shl_22",
++  "__subleq_shl_23",
++  "__subleq_shl_24",
++  "__subleq_shl_25",
++  "__subleq_shl_26",
++  "__subleq_shl_27",
++  "__subleq_shl_28",
++  "__subleq_shl_29",
++  "__subleq_shl_3",
++  "__subleq_shl_30",
++  "__subleq_shl_31",
++  "__subleq_shl_4",
++  "__subleq_shl_5",
++  "__subleq_shl_6",
++  "__subleq_shl_7",
++  "__subleq_shl_8",
++  "__subleq_shl_9",
++  "__subleq_sra",
++  "__subleq_sra_1",
++  "__subleq_sra_10",
++  "__subleq_sra_11",
++  "__subleq_sra_12",
++  "__subleq_sra_13",
++  "__subleq_sra_14",
++  "__subleq_sra_15",
++  "__subleq_sra_16",
++  "__subleq_sra_17",
++  "__subleq_sra_18",
++  "__subleq_sra_19",
++  "__subleq_sra_2",
++  "__subleq_sra_20",
++  "__subleq_sra_21",
++  "__subleq_sra_22",
++  "__subleq_sra_23",
++  "__subleq_sra_24",
++  "__subleq_sra_25",
++  "__subleq_sra_26",
++  "__subleq_sra_27",
++  "__subleq_sra_28",
++  "__subleq_sra_29",
++  "__subleq_sra_3",
++  "__subleq_sra_30",
++  "__subleq_sra_31",
++  "__subleq_sra_4",
++  "__subleq_sra_5",
++  "__subleq_sra_6",
++  "__subleq_sra_7",
++  "__subleq_sra_8",
++  "__subleq_sra_9",
++  "__subleq_srl",
++  "__subleq_srl_1",
++  "__subleq_srl_10",
++  "__subleq_srl_11",
++  "__subleq_srl_12",
++  "__subleq_srl_13",
++  "__subleq_srl_14",
++  "__subleq_srl_15",
++  "__subleq_srl_16",
++  "__subleq_srl_17",
++  "__subleq_srl_18",
++  "__subleq_srl_19",
++  "__subleq_srl_2",
++  "__subleq_srl_20",
++  "__subleq_srl_21",
++  "__subleq_srl_22",
++  "__subleq_srl_23",
++  "__subleq_srl_24",
++  "__subleq_srl_25",
++  "__subleq_srl_26",
++  "__subleq_srl_27",
++  "__subleq_srl_28",
++  "__subleq_srl_29",
++  "__subleq_srl_3",
++  "__subleq_srl_30",
++  "__subleq_srl_31",
++  "__subleq_srl_4",
++  "__subleq_srl_5",
++  "__subleq_srl_6",
++  "__subleq_srl_7",
++  "__subleq_srl_8",
++  "__subleq_srl_9",
++  "__subleq_syscall",
++  "__subleq_udivrem",
++  "__subleq_udivrem64",
++  "__subleq_xor",
++  "__subleq_xor_b0",
++  "__subleq_xor_b1",
++  "__subleq_xor_b10",
++  "__subleq_xor_b11",
++  "__subleq_xor_b12",
++  "__subleq_xor_b13",
++  "__subleq_xor_b14",
++  "__subleq_xor_b15",
++  "__subleq_xor_b16",
++  "__subleq_xor_b17",
++  "__subleq_xor_b18",
++  "__subleq_xor_b19",
++  "__subleq_xor_b2",
++  "__subleq_xor_b20",
++  "__subleq_xor_b21",
++  "__subleq_xor_b22",
++  "__subleq_xor_b23",
++  "__subleq_xor_b24",
++  "__subleq_xor_b25",
++  "__subleq_xor_b26",
++  "__subleq_xor_b27",
++  "__subleq_xor_b28",
++  "__subleq_xor_b29",
++  "__subleq_xor_b3",
++  "__subleq_xor_b30",
++  "__subleq_xor_b4",
++  "__subleq_xor_b5",
++  "__subleq_xor_b6",
++  "__subleq_xor_b7",
++  "__subleq_xor_b8",
++  "__subleq_xor_b9",
++  "__subsf3",
++  "__truncdfsf2",
++  "__udivdi3",
++  "__umoddi3",
++  "__unorddf2",
++  "__unordsf2",
+diff --git a/gas/Makefile.am b/gas/Makefile.am
+index 9f90a1d..c49ab4e 100644
+--- a/gas/Makefile.am
++++ b/gas/Makefile.am
+@@ -183,6 +183,7 @@ TARGET_CPU_CFILES = \
+ 	config/tc-mn10200.c \
+ 	config/tc-mn10300.c \
+ 	config/tc-moxie.c \
++	config/tc-subleq.c \
+ 	config/tc-msp430.c \
+ 	config/tc-mt.c \
+ 	config/tc-nds32.c \
+@@ -273,6 +274,7 @@ TARGET_CPU_HFILES = \
+ 	config/tc-sh.h \
+ 	config/tc-sparc.h \
+ 	config/tc-spu.h \
++	config/tc-subleq.h \
+ 	config/tc-tic30.h \
+ 	config/tc-tic4x.h \
+ 	config/tc-tic54x.h \
+diff --git a/gas/Makefile.in b/gas/Makefile.in
+index b2bb505..7df63d4 100644
+--- a/gas/Makefile.in
++++ b/gas/Makefile.in
+@@ -702,6 +702,7 @@ TARGET_CPU_CFILES = \
+ 	config/tc-sh.c \
+ 	config/tc-sparc.c \
+ 	config/tc-spu.c \
++	config/tc-subleq.c \
+ 	config/tc-tic30.c \
+ 	config/tc-tic4x.c \
+ 	config/tc-tic54x.c \
+@@ -775,6 +776,7 @@ TARGET_CPU_HFILES = \
+ 	config/tc-sh.h \
+ 	config/tc-sparc.h \
+ 	config/tc-spu.h \
++	config/tc-subleq.h \
+ 	config/tc-tic30.h \
+ 	config/tc-tic4x.h \
+ 	config/tc-tic54x.h \
+@@ -1183,6 +1185,8 @@ config/tc-mn10300.$(OBJEXT): config/$(am__dirstamp) \
+ 	config/$(DEPDIR)/$(am__dirstamp)
+ config/tc-moxie.$(OBJEXT): config/$(am__dirstamp) \
+ 	config/$(DEPDIR)/$(am__dirstamp)
++config/tc-subleq.$(OBJEXT): config/$(am__dirstamp) \
++	config/$(DEPDIR)/$(am__dirstamp)
+ config/tc-msp430.$(OBJEXT): config/$(am__dirstamp) \
+ 	config/$(DEPDIR)/$(am__dirstamp)
+ config/tc-mt.$(OBJEXT): config/$(am__dirstamp) \
+@@ -1419,6 +1423,7 @@ distclean-compile:
+ @AMDEP_TRUE@@am__include@ @am__quote@config/$(DEPDIR)/tc-mn10200.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@config/$(DEPDIR)/tc-mn10300.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@config/$(DEPDIR)/tc-moxie.Po@am__quote@
++@AMDEP_TRUE@@am__include@ @am__quote@config/$(DEPDIR)/tc-subleq.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@config/$(DEPDIR)/tc-msp430.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@config/$(DEPDIR)/tc-mt.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@config/$(DEPDIR)/tc-nds32.Po@am__quote@
+diff --git a/gas/config/tc-subleq.c b/gas/config/tc-subleq.c
+new file mode 100644
+index 0000000..b6a37ac
+--- /dev/null
++++ b/gas/config/tc-subleq.c
+@@ -0,0 +1,143 @@
++/* GNU assembler backend for SUBLEQ+.
++   SPDX-License-Identifier: GPL-3.0-or-later */
++#include "as.h"
++#include "safe-ctype.h"
++
++const char comment_chars[] = "#";
++const char line_comment_chars[] = "#";
++const char line_separator_chars[] = ";";
++const char EXP_CHARS[] = "eE";
++const char FLT_CHARS[] = "fFdD";
++
++/* Unlike the generic ELF .word directive, an ISA word is 32 bits.  */
++const pseudo_typeS md_pseudo_table[] = { {"word", cons, 4}, {NULL, NULL, 0} };
++const char md_shortopts[] = "";
++const struct option md_longopts[] = { {NULL, no_argument, NULL, 0} };
++const size_t md_longopts_size = sizeof (md_longopts);
++
++void
++md_begin (void)
++{
++  record_alignment (text_section, 2);
++}
++
++int
++md_parse_option (int code ATTRIBUTE_UNUSED, const char *arg ATTRIBUTE_UNUSED)
++{
++  return 0;
++}
++
++void
++md_show_usage (FILE *stream ATTRIBUTE_UNUSED)
++{
++}
++
++const char *
++md_atof (int type, char *lit, int *size)
++{
++  return ieee_md_atof (type, lit, size, false);
++}
++
++long
++md_pcrel_from (fixS *fix)
++{
++  return fix->fx_frag->fr_address + fix->fx_where;
++}
++
++void
++md_assemble (char *line)
++{
++  expressionS operands[3];
++  char *saved = input_line_pointer;
++  const char mnemonic[] = "subleq";
++
++  if (strncmp (line, mnemonic, sizeof mnemonic - 1) != 0
++      || !ISSPACE (line[sizeof mnemonic - 1]))
++    {
++      as_bad (_("expected `subleq A, B, C'"));
++      return;
++    }
++
++  input_line_pointer = line + sizeof mnemonic - 1;
++  for (unsigned int i = 0; i < 3; ++i)
++    {
++      expression (&operands[i]);
++      SKIP_WHITESPACE ();
++      if (operands[i].X_op == O_absent || operands[i].X_op == O_illegal
++          || (i < 2 && *input_line_pointer++ != ',')
++          || (i == 2 && *input_line_pointer != '\0'))
++        {
++          as_bad (_("expected three comma-separated SUBLEQ word expressions"));
++          input_line_pointer = saved;
++          return;
++        }
++    }
++  input_line_pointer = saved;
++  for (unsigned int i = 0; i < 3; ++i)
++    emit_expr (&operands[i], 4);
++}
++
++void
++subleq_cons_fix_new (fragS *frag, int where, unsigned int size,
++                     expressionS *exp)
++{
++  /* Preserve a positive implicit addend in ET_REL for -(S+A).  The final
++     linker (not GAS) negates the sum.  A folded absolute constant still
++     needs to be negated in md_apply_fix.  */
++  if (exp->X_op == O_uminus && size == 4)
++    {
++      symbolS *sym = exp->X_add_symbol;
++      offsetT addend = - (valueT) exp->X_add_number;
++      if (S_GET_SEGMENT (sym) == expr_section)
++        {
++          const expressionS *inner = symbol_get_value_expression (sym);
++          if (inner->X_op != O_symbol)
++            {
++              /* GAS resolves same-section symbol differences itself.  */
++              fix_new_exp (frag, where, size, exp, 0, BFD_RELOC_32);
++              return;
++            }
++          sym = inner->X_add_symbol;
++          addend += inner->X_add_number;
++        }
++      fix_new (frag, where, size, sym, addend, 0, BFD_RELOC_SUBLEQ_NEG32);
++      return;
++    }
++  /* Non-word constant differences can fold too, but have no ELF reloc.  */
++  fix_new_exp (frag, where, size, exp, 0,
++               size == 4 ? BFD_RELOC_32 : BFD_RELOC_UNUSED);
++}
++
++void
++md_apply_fix (fixS *fix, valueT *value, segT seg ATTRIBUTE_UNUSED)
++{
++  valueT word = *value;
++  if (fix->fx_addsy == NULL && fix->fx_subsy == NULL && !fix->fx_pcrel)
++    {
++      fix->fx_done = 1;
++      if (fix->fx_r_type == BFD_RELOC_SUBLEQ_NEG32)
++        word = 0 - word;
++    }
++  md_number_to_chars (fix->fx_frag->fr_literal + fix->fx_where, word,
++                      fix->fx_size);
++}
++
++arelent *
++tc_gen_reloc (asection *sec ATTRIBUTE_UNUSED, fixS *fix)
++{
++  if (fix->fx_size != 4 || fix->fx_pcrel || fix->fx_subsy != NULL
++      || (fix->fx_r_type != BFD_RELOC_32
++          && fix->fx_r_type != BFD_RELOC_SUBLEQ_NEG32))
++    {
++      as_bad_where (fix->fx_file, fix->fx_line,
++                    _("unsupported SUBLEQ relocation expression"));
++      return NULL;
++    }
++  arelent *rel = notes_alloc (sizeof (*rel));
++  rel->sym_ptr_ptr = notes_alloc (sizeof (*rel->sym_ptr_ptr));
++  *rel->sym_ptr_ptr = symbol_get_bfdsym (fix->fx_addsy);
++  rel->address = fix->fx_frag->fr_address + fix->fx_where;
++  rel->addend = 0; /* REL: the addend is already in the word.  */
++  rel->howto = bfd_reloc_type_lookup (stdoutput, fix->fx_r_type);
++  return rel;
++}
+diff --git a/gas/config/tc-subleq.h b/gas/config/tc-subleq.h
+new file mode 100644
+index 0000000..aa2589e
+--- /dev/null
++++ b/gas/config/tc-subleq.h
+@@ -0,0 +1,25 @@
++/* GAS target definitions for SUBLEQ+.
++   SPDX-License-Identifier: GPL-3.0-or-later */
++#ifndef TC_SUBLEQ
++#define TC_SUBLEQ 1
++
++#define TARGET_ARCH bfd_arch_subleq
++#define TARGET_MACH bfd_mach_subleq
++#define TARGET_FORMAT "elf32-subleq"
++#define TARGET_BYTES_BIG_ENDIAN 0
++#define WORKING_DOT_WORD
++#define md_number_to_chars number_to_chars_littleendian
++#define md_section_align(SEC, SIZE) (SIZE)
++#define md_undefined_symbol(NAME) NULL
++#define md_operand(EXP) ((void) 0)
++#define md_estimate_size_before_relax(FRAG, SEG) \
++  (as_fatal (_("unexpected SUBLEQ relaxation")), 0)
++#define md_convert_frag(ABFD, SEG, FRAG) \
++  as_fatal (_("unexpected SUBLEQ relaxation"))
++#define MD_APPLY_SYM_VALUE(FIX) 0
++#define TC_CONS_FIX_NEW(FRAG, WHERE, SIZE, EXP, RELOC) \
++  subleq_cons_fix_new (FRAG, WHERE, SIZE, EXP)
++
++extern void subleq_cons_fix_new (fragS *, int, unsigned int, expressionS *);
++
++#endif
+diff --git a/gas/configure.tgt b/gas/configure.tgt
+index 7a5645f..6950f82 100644
+--- a/gas/configure.tgt
++++ b/gas/configure.tgt
+@@ -285,6 +285,7 @@ case ${generic_target} in
+   kvx-*-linux*)				fmt=elf em=linux ;;
+ 
+   lm32-*-*)				fmt=elf ;;
++  subleq-*-*)				fmt=elf endian=little ;;
+ 
+   loongarch*)				fmt=elf ;;
+ 
+diff --git a/ld/Makefile.am b/ld/Makefile.am
+index 3ae3d7f..3750043 100644
+--- a/ld/Makefile.am
++++ b/ld/Makefile.am
+@@ -253,6 +253,7 @@ ALL_EMULATION_SOURCES = \
+ 	eelf32microblaze.c \
+ 	eelf32microblazeel.c \
+ 	eelf32moxie.c \
++	eelf32subleq.c \
+ 	eelf32mt.c \
+ 	eelf32or1k.c \
+ 	eelf32or1k_linux.c \
+diff --git a/ld/Makefile.in b/ld/Makefile.in
+index d879f04..4b98ca6 100644
+--- a/ld/Makefile.in
++++ b/ld/Makefile.in
+@@ -768,6 +768,7 @@ ALL_EMULATION_SOURCES = \
+ 	eelf32microblaze.c \
+ 	eelf32microblazeel.c \
+ 	eelf32moxie.c \
++	eelf32subleq.c \
+ 	eelf32mt.c \
+ 	eelf32or1k.c \
+ 	eelf32or1k_linux.c \
+@@ -1409,6 +1410,7 @@ distclean-compile:
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/eelf32microblazeel.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/eelf32mipswindiss.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/eelf32moxie.Po@am__quote@
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/eelf32subleq.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/eelf32mt.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/eelf32or1k.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/eelf32or1k_linux.Po@am__quote@
+diff --git a/ld/configure.tgt b/ld/configure.tgt
+index 60b62e6..e68e9b8 100644
+--- a/ld/configure.tgt
++++ b/ld/configure.tgt
+@@ -900,6 +900,8 @@ sparc*-*-*)		targ_emul=elf32_sparc
+ 			;;
+ spu-*-elf*)		targ_emul=elf32_spu
+ 			;;
++subleq-*-*)		targ_emul=elf32subleq
++			;;
+ tic30-*-*coff*)		targ_emul=tic30coff
+ 			targ_extra_ofiles=
+ 			;;
+diff --git a/ld/emulparams/elf32subleq.sh b/ld/emulparams/elf32subleq.sh
+new file mode 100644
+index 0000000..169c509
+--- /dev/null
++++ b/ld/emulparams/elf32subleq.sh
+@@ -0,0 +1,15 @@
++# GNU ld SUBLEQ Linux ELF emulation.
++# SPDX-License-Identifier: GPL-3.0-or-later
++source_sh ${srcdir}/emulparams/dt-relr.sh
++SCRIPT_NAME=elf
++TEMPLATE_NAME=elf
++OUTPUT_FORMAT=elf32-subleq
++ARCH=subleq
++NO_RELA_RELOCS=yes
++MAXPAGESIZE='CONSTANT (MAXPAGESIZE)'
++COMMONPAGESIZE='CONSTANT (COMMONPAGESIZE)'
++TEXT_START_ADDR=0
++NO_SMALL_DATA=yes
++DYNAMIC_LINK=false
++GENERATE_PIE_SCRIPT=yes
++GENERATE_SHLIB_SCRIPT=yes
+diff --git a/ld/plugin.c b/ld/plugin.c
+index 1cf5c91..c994bed 100644
+--- a/ld/plugin.c
++++ b/ld/plugin.c
+@@ -209,7 +209,7 @@ dlclose (void *handle)
+ 
+ #endif /* !defined (HAVE_DLFCN_H) && defined (HAVE_WINDOWS_H)  */
+ 
+-#ifndef HAVE_DLFCN_H
++#if !defined (HAVE_DLFCN_H) && defined (HAVE_WINDOWS_H)
+ static const char *
+ dlerror (void)
+ {
+@@ -243,6 +243,7 @@ plugin_error_plugin (void)
+ void
+ plugin_opt_plugin (const char *plugin)
+ {
++#if defined (HAVE_DLFCN_H) || defined (HAVE_WINDOWS_H)
+   plugin_t *newplug;
+   plugin_t *curplug = plugins_list;
+ 
+@@ -272,6 +273,9 @@ plugin_opt_plugin (const char *plugin)
+   /* Record it as current plugin for receiving args.  */
+   last_plugin = newplug;
+   last_plugin_args_tail_chain_ptr = &newplug->args;
++#else
++  fatal (_("%P: %s: plugins are unavailable on this host\n"), plugin);
++#endif
+ }
+ 
+ /* Accumulate option arguments for last-loaded plugin, or return
+@@ -1103,6 +1107,7 @@ set_tv_plugin_args (plugin_t *plugin, struct ld_plugin_tv *tv)
+ void
+ plugin_load_plugins (void)
+ {
++#if defined (HAVE_DLFCN_H) || defined (HAVE_WINDOWS_H)
+   struct ld_plugin_tv *my_tv;
+   unsigned int max_args = 0;
+   plugin_t *curplug = plugins_list;
+@@ -1162,6 +1167,7 @@ plugin_load_plugins (void)
+ #if HAVE_MMAP && HAVE_GETPAGESIZE
+   plugin_pagesize = getpagesize ();
+ #endif
++#endif
+ }
+ 
+ /* Call 'claim file' hook for all plugins.  */
+@@ -1391,6 +1397,7 @@ plugin_call_all_symbols_read (void)
+ void
+ plugin_call_cleanup (void)
+ {
++#if defined (HAVE_DLFCN_H) || defined (HAVE_WINDOWS_H)
+   plugin_t *curplug = plugins_list;
+   while (curplug)
+     {
+@@ -1411,6 +1418,7 @@ plugin_call_cleanup (void)
+ 	}
+       curplug = curplug->next;
+     }
++#endif
+ }
+ 
+ /* To determine which symbols should be resolved LDPR_PREVAILING_DEF

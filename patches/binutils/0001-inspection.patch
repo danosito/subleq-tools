@@ -1,0 +1,613 @@
+diff --git a/bfd/Makefile.am b/bfd/Makefile.am
+index e4df054..568b1a7 100644
+--- a/bfd/Makefile.am
++++ b/bfd/Makefile.am
+@@ -160,6 +160,7 @@ ALL_MACHINES = \
+ 	cpu-sh.lo \
+ 	cpu-sparc.lo \
+ 	cpu-spu.lo \
++	cpu-subleq.lo \
+ 	cpu-tic30.lo \
+ 	cpu-tic4x.lo \
+ 	cpu-tic54x.lo \
+@@ -243,6 +244,7 @@ ALL_MACHINES_CFILES = \
+ 	cpu-sh.c \
+ 	cpu-sparc.c \
+ 	cpu-spu.c \
++	cpu-subleq.c \
+ 	cpu-tic30.c \
+ 	cpu-tic4x.c \
+ 	cpu-tic54x.c \
+@@ -342,6 +344,7 @@ BFD32_BACKENDS = \
+ 	elf32-s390.lo \
+ 	elf32-sh.lo \
+ 	elf32-sparc.lo \
++	elf32-subleq.lo \
+ 	elf32-spu.lo \
+ 	elf32-tic6x.lo \
+ 	elf32-tilegx.lo \
+@@ -477,6 +480,7 @@ BFD32_BACKENDS_CFILES = \
+ 	elf32-s390.c \
+ 	elf32-sh.c \
+ 	elf32-sparc.c \
++	elf32-subleq.c \
+ 	elf32-spu.c \
+ 	elf32-tic6x.c \
+ 	elf32-tilegx.c \
+diff --git a/bfd/Makefile.in b/bfd/Makefile.in
+index 14512cf..763ebcc 100644
+--- a/bfd/Makefile.in
++++ b/bfd/Makefile.in
+@@ -628,6 +628,7 @@ ALL_MACHINES = \
+ 	cpu-sh.lo \
+ 	cpu-sparc.lo \
+ 	cpu-spu.lo \
++	cpu-subleq.lo \
+ 	cpu-tic30.lo \
+ 	cpu-tic4x.lo \
+ 	cpu-tic54x.lo \
+@@ -711,6 +712,7 @@ ALL_MACHINES_CFILES = \
+ 	cpu-sh.c \
+ 	cpu-sparc.c \
+ 	cpu-spu.c \
++	cpu-subleq.c \
+ 	cpu-tic30.c \
+ 	cpu-tic4x.c \
+ 	cpu-tic54x.c \
+@@ -811,6 +813,7 @@ BFD32_BACKENDS = \
+ 	elf32-s390.lo \
+ 	elf32-sh.lo \
+ 	elf32-sparc.lo \
++	elf32-subleq.lo \
+ 	elf32-spu.lo \
+ 	elf32-tic6x.lo \
+ 	elf32-tilegx.lo \
+@@ -946,6 +949,7 @@ BFD32_BACKENDS_CFILES = \
+ 	elf32-s390.c \
+ 	elf32-sh.c \
+ 	elf32-sparc.c \
++	elf32-subleq.c \
+ 	elf32-spu.c \
+ 	elf32-tic6x.c \
+ 	elf32-tilegx.c \
+@@ -1540,6 +1544,7 @@ distclean-compile:
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cpu-sh.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cpu-sparc.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cpu-spu.Plo@am__quote@
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cpu-subleq.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cpu-tic30.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cpu-tic4x.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cpu-tic54x.Plo@am__quote@
+@@ -1626,6 +1631,7 @@ distclean-compile:
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/elf32-score7.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/elf32-sh.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/elf32-sparc.Plo@am__quote@
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/elf32-subleq.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/elf32-spu.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/elf32-tic6x.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/elf32-tilegx.Plo@am__quote@
+diff --git a/bfd/archures.c b/bfd/archures.c
+index 0e91924..b15ccc8 100644
+--- a/bfd/archures.c
++++ b/bfd/archures.c
+@@ -590,6 +590,8 @@ DESCRIPTION
+ .#define bfd_mach_amdgcn_gfx1201         0x04e
+ .#define bfd_mach_amdgcn_gfx12_5_generic 0x05b
+ .#define bfd_mach_amdgcn_gfx1250         0x049
++.  bfd_arch_subleq,    {* SUBLEQ+.  *}
++.#define bfd_mach_subleq       1
+ .  bfd_arch_last
+ .  };
+ */
+@@ -709,6 +711,7 @@ extern const bfd_arch_info_type bfd_score_arch;
+ extern const bfd_arch_info_type bfd_sh_arch;
+ extern const bfd_arch_info_type bfd_sparc_arch;
+ extern const bfd_arch_info_type bfd_spu_arch;
++extern const bfd_arch_info_type bfd_subleq_arch;
+ extern const bfd_arch_info_type bfd_tic30_arch;
+ extern const bfd_arch_info_type bfd_tic4x_arch;
+ extern const bfd_arch_info_type bfd_tic54x_arch;
+@@ -795,6 +798,7 @@ static const bfd_arch_info_type * const bfd_archures_list[] =
+     &bfd_sh_arch,
+     &bfd_sparc_arch,
+     &bfd_spu_arch,
++    &bfd_subleq_arch,
+     &bfd_tic30_arch,
+     &bfd_tic4x_arch,
+     &bfd_tic54x_arch,
+diff --git a/bfd/bfd-in2.h b/bfd/bfd-in2.h
+index e49d673..52e87fc 100644
+--- a/bfd/bfd-in2.h
++++ b/bfd/bfd-in2.h
+@@ -1847,6 +1847,8 @@ enum bfd_architecture
+ #define bfd_mach_amdgcn_gfx1201         0x04e
+ #define bfd_mach_amdgcn_gfx12_5_generic 0x05b
+ #define bfd_mach_amdgcn_gfx1250         0x049
++  bfd_arch_subleq,    /* SUBLEQ+.  */
++#define bfd_mach_subleq       1
+   bfd_arch_last
+   };
+ 
+diff --git a/bfd/config.bfd b/bfd/config.bfd
+index 02a1a68..851cf89 100644
+--- a/bfd/config.bfd
++++ b/bfd/config.bfd
+@@ -1274,6 +1274,10 @@ case "${targ}" in
+     want64=true
+     ;;
+ 
++  subleq-*-*)
++    targ_defvec=subleq_elf32_vec
++    ;;
++
+   tic6x-*-elf)
+     targ_defvec=tic6x_elf32_c6000_le_vec
+     targ_selvecs="tic6x_elf32_c6000_be_vec tic6x_elf32_le_vec tic6x_elf32_be_vec"
+diff --git a/bfd/configure b/bfd/configure
+index 1b82938..5d804c1 100755
+--- a/bfd/configure
++++ b/bfd/configure
+@@ -16076,6 +16076,7 @@ do
+     sparc_elf64_fbsd_vec)	 tb="$tb elf64-sparc.lo elf64.lo $elfxx_sparc"; target_size=64 ;;
+     sparc_elf64_sol2_vec)	 tb="$tb elf64-sparc.lo elf64.lo $elfxx_sparc elf-solaris2.lo"; target_size=64 ;;
+     spu_elf32_vec)		 tb="$tb elf32-spu.lo elf32.lo $elf" ;;
++    subleq_elf32_vec)		 tb="$tb elf32-subleq.lo elf32.lo $elf" ;;
+     sym_vec)			 tb="$tb xsym.lo" ;;
+     tic30_coff_vec)		 tb="$tb coff-tic30.lo $coffgen" ;;
+     tic4x_coff0_vec)		 tb="$tb coff-tic4x.lo $coffgen" ;;
+diff --git a/bfd/configure.ac b/bfd/configure.ac
+index c30a75b..0a8753a 100644
+--- a/bfd/configure.ac
++++ b/bfd/configure.ac
+@@ -617,6 +617,7 @@ do
+     sparc_elf64_fbsd_vec)	 tb="$tb elf64-sparc.lo elf64.lo $elfxx_sparc"; target_size=64 ;;
+     sparc_elf64_sol2_vec)	 tb="$tb elf64-sparc.lo elf64.lo $elfxx_sparc elf-solaris2.lo"; target_size=64 ;;
+     spu_elf32_vec)		 tb="$tb elf32-spu.lo elf32.lo $elf" ;;
++    subleq_elf32_vec)		 tb="$tb elf32-subleq.lo elf32.lo $elf" ;;
+     sym_vec)			 tb="$tb xsym.lo" ;;
+     tic30_coff_vec)		 tb="$tb coff-tic30.lo $coffgen" ;;
+     tic4x_coff0_vec)		 tb="$tb coff-tic4x.lo $coffgen" ;;
+diff --git a/bfd/cpu-subleq.c b/bfd/cpu-subleq.c
+new file mode 100644
+index 0000000..b78cab5
+--- /dev/null
++++ b/bfd/cpu-subleq.c
+@@ -0,0 +1,24 @@
++/* BFD architecture descriptor for SUBLEQ+.
++   SPDX-License-Identifier: GPL-3.0-or-later */
++
++#include "sysdep.h"
++#include "bfd.h"
++#include "libbfd.h"
++
++const bfd_arch_info_type bfd_subleq_arch =
++{
++  32,                          /* Bits per word.  */
++  32,                          /* Bits per address.  */
++  8,                           /* Bits per byte.  */
++  bfd_arch_subleq,
++  bfd_mach_subleq,
++  "subleq",
++  "subleq",
++  2,                           /* Word-aligned section addresses.  */
++  true,
++  bfd_default_compatible,
++  bfd_default_scan,
++  bfd_arch_default_fill,
++  NULL,
++  8                            /* Last operand is at byte offset 8.  */
++};
+diff --git a/bfd/elf32-subleq.c b/bfd/elf32-subleq.c
+new file mode 100644
+index 0000000..16d72bd
+--- /dev/null
++++ b/bfd/elf32-subleq.c
+@@ -0,0 +1,81 @@
++/* BFD ELF32 support for the SUBLEQ+ Linux ABI.
++   SPDX-License-Identifier: GPL-3.0-or-later */
++
++#include "sysdep.h"
++#include "bfd.h"
++#include "libbfd.h"
++#include "elf-bfd.h"
++#include "elf/i386.h"
++#include "elf/subleq.h"
++
++/* Canonicalize REL records for inspection.  Do not implement link-time
++   relocation: LLD (including its negated-addend support) is required.  */
++static bfd_reloc_status_type
++subleq_unsupported_reloc (bfd *abfd ATTRIBUTE_UNUSED,
++                         arelent *reloc ATTRIBUTE_UNUSED,
++                         asymbol *symbol ATTRIBUTE_UNUSED,
++                         void *contents ATTRIBUTE_UNUSED,
++                         asection *section ATTRIBUTE_UNUSED,
++                         bfd *output_bfd ATTRIBUTE_UNUSED,
++                         char **message ATTRIBUTE_UNUSED)
++{
++  return bfd_reloc_notsupported;
++}
++
++static reloc_howto_type subleq_howto_none =
++  HOWTO (R_386_NONE, 0, 0, 0, false, 0, complain_overflow_dont,
++         subleq_unsupported_reloc, "R_386_NONE", false, 0, 0, false);
++
++#define SUBLEQ_REL (0xffffffff)
++static reloc_howto_type subleq_howto_32 =
++  HOWTO (R_386_32, 0, 4, 32, false, 0, complain_overflow_dont,
++         subleq_unsupported_reloc, "R_386_32", true, SUBLEQ_REL,
++         SUBLEQ_REL, false);
++static reloc_howto_type subleq_howto_relative =
++  HOWTO (R_386_RELATIVE, 0, 4, 32, false, 0, complain_overflow_dont,
++         subleq_unsupported_reloc, "R_386_RELATIVE", true, SUBLEQ_REL,
++         SUBLEQ_REL, false);
++static reloc_howto_type subleq_howto_neg32 =
++  HOWTO (R_SUBLEQ_NEG32, 0, 4, 32, false, 0, complain_overflow_dont,
++         subleq_unsupported_reloc, "R_SUBLEQ_NEG32", true, SUBLEQ_REL,
++         SUBLEQ_REL, false);
++#undef SUBLEQ_REL
++
++static bool
++subleq_info_to_howto_rel (bfd *abfd, arelent *cache_ptr,
++                         Elf_Internal_Rela *rel)
++{
++  unsigned int type = ELF32_R_TYPE (rel->r_info);
++
++  switch (type)
++    {
++    case R_386_NONE:
++      cache_ptr->howto = &subleq_howto_none;
++      return true;
++    case R_386_32:
++      cache_ptr->howto = &subleq_howto_32;
++      return true;
++    case R_386_RELATIVE:
++      cache_ptr->howto = &subleq_howto_relative;
++      return true;
++    case R_SUBLEQ_NEG32:
++      cache_ptr->howto = &subleq_howto_neg32;
++      return true;
++    }
++  _bfd_error_handler (_("%pB: unsupported SUBLEQ relocation type %#x"),
++                      abfd, type);
++  bfd_set_error (bfd_error_bad_value);
++  return false;
++}
++
++#define ELF_ARCH                        bfd_arch_subleq
++#define ELF_MACHINE_CODE                EM_SUBLEQ
++#define ELF_MAXPAGESIZE                 0x1000
++#define TARGET_LITTLE_SYM               subleq_elf32_vec
++#define TARGET_LITTLE_NAME              "elf32-subleq"
++#define USE_REL                         1
++#define elf_info_to_howto_rel           subleq_info_to_howto_rel
++#define bfd_elf32_bfd_reloc_type_lookup  _bfd_norelocs_bfd_reloc_type_lookup
++#define bfd_elf32_bfd_reloc_name_lookup  _bfd_norelocs_bfd_reloc_name_lookup
++
++#include "elf32-target.h"
+diff --git a/bfd/targets.c b/bfd/targets.c
+index fcf6504..3de3535 100644
+--- a/bfd/targets.c
++++ b/bfd/targets.c
+@@ -896,6 +896,7 @@ extern const bfd_target sparc_elf64_vec;
+ extern const bfd_target sparc_elf64_fbsd_vec;
+ extern const bfd_target sparc_elf64_sol2_vec;
+ extern const bfd_target spu_elf32_vec;
++extern const bfd_target subleq_elf32_vec;
+ extern const bfd_target sym_vec;
+ extern const bfd_target tic30_coff_vec;
+ extern const bfd_target tic4x_coff0_vec;
+@@ -1304,6 +1305,7 @@ static const bfd_target * const _bfd_target_vector[] =
+ #endif
+ 
+ 	&spu_elf32_vec,
++	&subleq_elf32_vec,
+ 
+ 	&sym_vec,
+ 
+diff --git a/binutils/readelf.c b/binutils/readelf.c
+index 1f7a90e..c2cb80f 100644
+--- a/binutils/readelf.c
++++ b/binutils/readelf.c
+@@ -72,13 +72,13 @@
+ #include "elf/internal.h"
+ 
+ 
+-/* Included here, before RELOC_MACROS_GEN_FUNC is defined, so that
+-   we can obtain the H8 reloc numbers.  We need these for the
+-   get_reloc_size() function.  We include h8.h again after defining
+-   RELOC_MACROS_GEN_FUNC so that we get the naming function as well.  */
++/* Include these before RELOC_MACROS_GEN_FUNC to get the relocation numbers.
++   Include them again afterward to get the naming functions.  */
+ 
+ #include "elf/h8.h"
+ #undef _ELF_H8_H
++#include "elf/i386.h"
++#undef _ELF_I386_H
+ 
+ /* Undo the effects of #including reloc-macros.h.  */
+ 
+@@ -161,6 +161,7 @@
+ #include "elf/tilegx.h"
+ #include "elf/tilepro.h"
+ #include "elf/v850.h"
++#include "elf/subleq.h"
+ #include "elf/vax.h"
+ #include "elf/visium.h"
+ #include "elf/wasm32.h"
+@@ -1268,6 +1269,7 @@ guess_is_rela (unsigned int e_machine)
+     case EM_XGATE:
+     case EM_NFP:
+     case EM_BPF:
++    case EM_SUBLEQ:
+       return false;
+ 
+       /* Targets that use RELA relocations.  */
+@@ -2031,6 +2033,10 @@ dump_relr_relocations (Filedata *          filedata,
+ 	rtype = "R_KVX_RELATIVE";
+ 	break;
+ 
++      case EM_SUBLEQ:
++	rtype = "R_386_RELATIVE";
++	break;
++
+       case EM_LATTICEMICO32:
+ 	rtype = "R_LM32_RELATIVE";
+ 	break;
+@@ -2456,6 +2462,16 @@ dump_relocations (Filedata *          filedata,
+ 	  rtype = elf_mmix_reloc_type (type);
+ 	  break;
+ 
++	case EM_SUBLEQ:
++	  switch (type)
++	    {
++	    case R_386_NONE: rtype = "R_386_NONE"; break;
++	    case R_386_32: rtype = "R_386_32"; break;
++	    case R_386_RELATIVE: rtype = "R_386_RELATIVE"; break;
++	    default: rtype = elf_subleq_reloc_type (type); break;
++	    }
++	  break;
++
+ 	case EM_MOXIE:
+ 	  rtype = elf_moxie_reloc_type (type);
+ 	  break;
+@@ -3803,6 +3819,7 @@ get_machine_name (unsigned e_machine)
+     case EM_Z80:		return "Zilog Z80";
+     case EM_VISIUM:		return "CDS VISIUMcore processor";
+     case EM_FT32:               return "FTDI Chip FT32";
++    case EM_SUBLEQ:		return "SUBLEQ";
+     case EM_MOXIE:              return "Moxie";
+     case EM_AMDGPU: 	 	return "AMD GPU";
+       /* 230 (all reserved) */
+diff --git a/config.sub b/config.sub
+index 3d35cde..b9a850e 100755
+--- a/config.sub
++++ b/config.sub
+@@ -1430,6 +1430,7 @@ case $cpu-$vendor in
+ 			| sparcv9 \
+ 			| sparcv9b \
+ 			| sparcv9v \
++			| subleq \
+ 			| spu \
+ 			| sv1 \
+ 			| sx* \
+diff --git a/include/elf/common.h b/include/elf/common.h
+index f811b8d..2ff4738 100644
+--- a/include/elf/common.h
++++ b/include/elf/common.h
+@@ -445,6 +445,8 @@
+ 
+ #define EM_CYGNUS_MEP		0xF00D  /* Toshiba MeP */
+ 
++#define EM_SUBLEQ		0xb124	/* SUBLEQ (LLVM/Linux ABI).  */
++
+ /* Old, unofficial value for Moxie.  */
+ #define EM_MOXIE_OLD            0xFEED
+ 
+diff --git a/include/elf/subleq.h b/include/elf/subleq.h
+new file mode 100644
+index 0000000..ad2afa1
+--- /dev/null
++++ b/include/elf/subleq.h
+@@ -0,0 +1,14 @@
++/* SUBLEQ-specific ELF definitions.
++   SPDX-License-Identifier: GPL-3.0-or-later */
++
++#ifndef _ELF_SUBLEQ_H
++#define _ELF_SUBLEQ_H
++
++#include "elf/reloc-macros.h"
++
++/* The ABI also uses R_386_NONE, R_386_32 and R_386_RELATIVE.  */
++START_RELOC_NUMBERS (elf_subleq_reloc_type)
++  RELOC_NUMBER (R_SUBLEQ_NEG32, 200)
++END_RELOC_NUMBERS (R_SUBLEQ_max)
++
++#endif /* _ELF_SUBLEQ_H */
+diff --git a/opcodes/Makefile.am b/opcodes/Makefile.am
+index a0fcf4d..5b766e6 100644
+--- a/opcodes/Makefile.am
++++ b/opcodes/Makefile.am
+@@ -240,6 +240,7 @@ TARGET32_LIBOPCODES_CFILES = \
+ 	sparc-dis.c \
+ 	sparc-opc.c \
+ 	spu-dis.c \
++	subleq-dis.c \
+ 	spu-opc.c \
+ 	tic30-dis.c \
+ 	tic4x-dis.c \
+diff --git a/opcodes/Makefile.in b/opcodes/Makefile.in
+index c5449be..1a3258c 100644
+--- a/opcodes/Makefile.in
++++ b/opcodes/Makefile.in
+@@ -646,6 +646,7 @@ TARGET32_LIBOPCODES_CFILES = \
+ 	sparc-dis.c \
+ 	sparc-opc.c \
+ 	spu-dis.c \
++	subleq-dis.c \
+ 	spu-opc.c \
+ 	tic30-dis.c \
+ 	tic4x-dis.c \
+@@ -1031,6 +1032,7 @@ distclean-compile:
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/sparc-dis.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/sparc-opc.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/spu-dis.Plo@am__quote@
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/subleq-dis.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/spu-opc.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tic30-dis.Plo@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tic4x-dis.Plo@am__quote@
+diff --git a/opcodes/configure b/opcodes/configure
+index 8299ef7..68f9a9b 100755
+--- a/opcodes/configure
++++ b/opcodes/configure
+@@ -14389,6 +14389,7 @@ if test x${all_targets} = xfalse ; then
+ 	bfd_sh_arch)		ta="$ta sh-dis.lo cgen-bitset.lo" ;;
+ 	bfd_sparc_arch)		ta="$ta sparc-dis.lo sparc-opc.lo" ;;
+ 	bfd_spu_arch)		ta="$ta spu-dis.lo spu-opc.lo" ;;
++	bfd_subleq_arch)	ta="$ta subleq-dis.lo" ;;
+ 	bfd_tic30_arch)		ta="$ta tic30-dis.lo" ;;
+ 	bfd_tic4x_arch)		ta="$ta tic4x-dis.lo" ;;
+ 	bfd_tic54x_arch)	ta="$ta tic54x-dis.lo tic54x-opc.lo" ;;
+diff --git a/opcodes/configure.ac b/opcodes/configure.ac
+index 2c25565..ce8c2ad 100644
+--- a/opcodes/configure.ac
++++ b/opcodes/configure.ac
+@@ -328,6 +328,7 @@ if test x${all_targets} = xfalse ; then
+ 	bfd_sh_arch)		ta="$ta sh-dis.lo cgen-bitset.lo" ;;
+ 	bfd_sparc_arch)		ta="$ta sparc-dis.lo sparc-opc.lo" ;;
+ 	bfd_spu_arch)		ta="$ta spu-dis.lo spu-opc.lo" ;;
++	bfd_subleq_arch)	ta="$ta subleq-dis.lo" ;;
+ 	bfd_tic30_arch)		ta="$ta tic30-dis.lo" ;;
+ 	bfd_tic4x_arch)		ta="$ta tic4x-dis.lo" ;;
+ 	bfd_tic54x_arch)	ta="$ta tic54x-dis.lo tic54x-opc.lo" ;;
+diff --git a/opcodes/disassemble.c b/opcodes/disassemble.c
+index 77d44bb..432dbc8 100644
+--- a/opcodes/disassemble.c
++++ b/opcodes/disassemble.c
+@@ -88,6 +88,7 @@
+ #define ARCH_sh
+ #define ARCH_sparc
+ #define ARCH_spu
++#define ARCH_subleq
+ #define ARCH_tic30
+ #define ARCH_tic4x
+ #define ARCH_tic54x
+@@ -418,6 +419,11 @@ disassembler (enum bfd_architecture a,
+       disassemble = print_insn_sparc;
+       break;
+ #endif
++#ifdef ARCH_subleq
++    case bfd_arch_subleq:
++      disassemble = print_insn_subleq;
++      break;
++#endif
+ #ifdef ARCH_spu
+     case bfd_arch_spu:
+       disassemble = print_insn_spu;
+diff --git a/opcodes/disassemble.h b/opcodes/disassemble.h
+index 2157790..48c77fc 100644
+--- a/opcodes/disassemble.h
++++ b/opcodes/disassemble.h
+@@ -56,6 +56,7 @@ extern int print_insn_little_arm	(bfd_vma, disassemble_info *);
+ extern int print_insn_little_mips	(bfd_vma, disassemble_info *);
+ extern int print_insn_little_powerpc	(bfd_vma, disassemble_info *);
+ extern int print_insn_little_score      (bfd_vma, disassemble_info *);
++extern int print_insn_subleq		(bfd_vma, disassemble_info *);
+ extern int print_insn_lm32		(bfd_vma, disassemble_info *);
+ extern int print_insn_m32r		(bfd_vma, disassemble_info *);
+ extern int print_insn_m68hc11		(bfd_vma, disassemble_info *);
+diff --git a/opcodes/subleq-dis.c b/opcodes/subleq-dis.c
+new file mode 100644
+index 0000000..dd77325
+--- /dev/null
++++ b/opcodes/subleq-dis.c
+@@ -0,0 +1,90 @@
++/* Disassemble SUBLEQ+ byte-addressed, little-endian instruction triplets.
++   SPDX-License-Identifier: GPL-3.0-or-later */
++
++#include "sysdep.h"
++#include "disassemble.h"
++
++#define SUBLEQ_WORD_SIZE 4
++#define SUBLEQ_INSN_SIZE (3 * SUBLEQ_WORD_SIZE)
++
++static void
++print_operand (bfd_signed_vma raw, disassemble_info *info)
++{
++  /* Bit zero selects indirection.  Signed truncation (not masking off
++     two bits) computes the address for negative I/O and MMIO operands.  */
++  bfd_signed_vma addr = raw / SUBLEQ_WORD_SIZE * SUBLEQ_WORD_SIZE;
++  bool indirect = raw & 1;
++  fprintf_styled_ftype out = info->fprintf_styled_func;
++
++  if (indirect)
++    out (info->stream, dis_style_text, "[");
++  out (info->stream, dis_style_address, "%s0x%lx", addr < 0 ? "-" : "",
++       (unsigned long) (addr < 0 ? - (bfd_vma) addr : (bfd_vma) addr));
++  if (indirect)
++    out (info->stream, dis_style_text, "]");
++}
++
++int
++print_insn_subleq (bfd_vma memaddr, disassemble_info *info)
++{
++  bfd_byte buf[SUBLEQ_INSN_SIZE];
++  bfd_signed_vma a, b, c;
++  unsigned int size = SUBLEQ_INSN_SIZE;
++  int status;
++  fprintf_styled_ftype out = info->fprintf_styled_func;
++
++  info->bytes_per_line = SUBLEQ_INSN_SIZE;
++  info->bytes_per_chunk = SUBLEQ_WORD_SIZE;
++  info->display_endian = BFD_ENDIAN_LITTLE;
++  info->insn_info_valid = 0;
++
++  /* Objdump bounds reads to the next symbol in a code section.  Treat
++     a partial triplet at a known static boundary as data, not code.
++     GDB's live memory reads still require a full instruction.  */
++  if (info->buffer && memaddr >= info->buffer_vma
++      && memaddr - info->buffer_vma < info->buffer_length)
++    {
++      bfd_vma available = info->buffer_length - (memaddr - info->buffer_vma);
++      if (info->stop_vma > memaddr && info->stop_vma - memaddr < available)
++        available = info->stop_vma - memaddr;
++      if (available < size || memaddr % SUBLEQ_WORD_SIZE != 0)
++        size = (available >= SUBLEQ_WORD_SIZE
++                && memaddr % SUBLEQ_WORD_SIZE == 0 ? SUBLEQ_WORD_SIZE : 1);
++    }
++
++  status = info->read_memory_func (memaddr, buf, size, info);
++  if (status != 0)
++    {
++      info->memory_error_func (status, memaddr, info);
++      return -1;
++    }
++
++  if (size < SUBLEQ_INSN_SIZE)
++    {
++      info->bytes_per_chunk = size;
++      if (size == SUBLEQ_WORD_SIZE)
++        out (info->stream, dis_style_assembler_directive, ".long\t");
++      else
++        out (info->stream, dis_style_assembler_directive, ".byte\t");
++      out (info->stream, dis_style_immediate, "0x%lx",
++           size == SUBLEQ_WORD_SIZE ? (unsigned long) bfd_getl32 (buf)
++                                    : (unsigned long) buf[0]);
++      return size;
++    }
++
++  a = bfd_getl_signed_32 (buf);
++  b = bfd_getl_signed_32 (buf + SUBLEQ_WORD_SIZE);
++  c = bfd_getl_signed_32 (buf + 2 * SUBLEQ_WORD_SIZE);
++  out (info->stream, dis_style_mnemonic, "subleq\t");
++  print_operand (a, info);
++  out (info->stream, dis_style_text, ", ");
++  print_operand (b, info);
++  out (info->stream, dis_style_text, ", ");
++  if (c >= SUBLEQ_WORD_SIZE && !(c & 1))
++    info->print_address_func (c / SUBLEQ_WORD_SIZE * SUBLEQ_WORD_SIZE, info);
++  else
++    print_operand (c, info);
++  if (!(c & 1) && c / SUBLEQ_WORD_SIZE == 0)
++    out (info->stream, dis_style_comment_start, "\t; halt");
++  return SUBLEQ_INSN_SIZE;
++}

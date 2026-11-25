@@ -1,0 +1,39 @@
+--- a/src/os_unix.c
++++ b/src/os_unix.c
+@@ -4515,6 +4515,7 @@ mch_new_shellsize(void)
+     // Nothing to do.
+ }
+ 
++#ifndef USE_SYSTEM
+ /*
+  * Wait for process "child" to end.
+  * Return "child" if it exited properly, <= 0 on error.
+@@ -4549,6 +4550,7 @@ wait4pid(pid_t child, waitstatus *status)
+     }
+     return wait_pid;
+ }
++#endif
+ 
+ #if !defined(USE_SYSTEM) || defined(FEAT_JOB_CHANNEL)
+ /*
+@@ -5802,5 +5804,12 @@ mch_get_cmd_output_direct(
+     int		*ret_len)
+ {
++# if defined(__subleq__)
++    // The SUBLEQ no-MMU libc does not provide fork().  Do not use vfork()
++    // here: the child changes Vim's state before calling execvp().
++    set_vim_var_nr(VV_SHELL_ERROR, -1);
++    emsg(_("Direct subprocess execution is not available on SUBLEQ"));
++    return NULL;
++# else
+     pid_t	pid;
+     int		fd_out[2] = {-1, -1};
+     int		status = -1;
+@@ -5934,6 +5943,7 @@ mch_get_cmd_output_direct(
+ 
+     ga_clear(&ga);
+     return buffer;
++# endif
+ }
+ #endif
+ 
